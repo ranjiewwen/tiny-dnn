@@ -1,15 +1,20 @@
 /*
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
     in the LICENSE file.
 */
 #pragma once
+
 #include <google/protobuf/io/coded_stream.h>
 #include <google/protobuf/io/zero_copy_stream_impl.h>
 #include <google/protobuf/text_format.h>
-#include "caffe.pb.h"
+
+#include <memory>
+#include <string>
+
+#include "tiny_dnn/io/caffe/caffe.pb.h"
 
 #include "tiny_dnn/io/caffe/layer_factory_impl.h"
 #include "tiny_dnn/lossfunctions/loss_function.h"
@@ -20,11 +25,11 @@
 namespace tiny_dnn {
 
 /**
-* create whole network and load weights from caffe's netparameter
-*
-* @param layer [in] netparameter of caffemodel
-* @param data_shape [in] size of input data (width x height x channels)
-*/
+ * create whole network and load weights from caffe's netparameter
+ *
+ * @param layer [in] netparameter of caffemodel
+ * @param data_shape [in] size of input data (width x height x channels)
+ */
 inline std::shared_ptr<network<sequential>> create_net_from_caffe_net(
   const caffe::NetParameter &layer, const shape3d &data_shape) {
   detail::caffe_layer_vector src_net(layer);
@@ -143,7 +148,12 @@ inline void reload_weight_from_caffe_net(const caffe::NetParameter &layer,
       tiny_layer_idx++;
     }
 
-    if (tiny_layer_idx >= net->depth()) break;
+    if (tiny_layer_idx >= net->depth()) {
+      throw nn_error(
+        "error: tiny-dnn does not support loading weights "
+        "for this layer type: " +
+        type);
+    }
 
     // load weight
     detail::load(src_net[caffe_layer_idx], (*net)[tiny_layer_idx++]);

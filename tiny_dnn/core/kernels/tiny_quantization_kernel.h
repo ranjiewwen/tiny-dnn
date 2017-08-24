@@ -1,11 +1,15 @@
 /*
-    Copyright (c) 2016, Taiga Nomi, Edgar Riba
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
     in the LICENSE file.
 */
 #pragma once
+
+#include <algorithm>
+#include <limits>
+#include <vector>
 
 namespace tiny_dnn {
 namespace core {
@@ -234,7 +238,7 @@ void quantize_down_and_shrink_range(std::vector<T1> &input,
   const int32_t input_highest_quantized = static_cast<int32_t>(highest<T1>());
   T1 actual_min_quantized               = input_highest_quantized;
   T1 actual_max_quantized               = input_lowest_quantized;
-  for (serial_size_t i = 0; i < input.size(); ++i) {
+  for (size_t i = 0; i < input.size(); ++i) {
     const T1 value       = input[i];
     actual_min_quantized = std::min(actual_min_quantized, value);
     actual_max_quantized = std::max(actual_max_quantized, value);

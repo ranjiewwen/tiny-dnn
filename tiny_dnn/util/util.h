@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
@@ -7,31 +7,40 @@
 */
 #pragma once
 
+#include <algorithm>
 #include <cassert>
 #include <cstdarg>
 #include <cstdio>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
+
+#include "tiny_dnn/xtensor/xarray.hpp"
+#include "tiny_dnn/xtensor/xview.hpp"
+
+#include "tiny_dnn/config.h"
 
 #ifndef CNN_NO_SERIALIZATION
 #include <cereal/archives/binary.hpp>
 #include <cereal/archives/json.hpp>
 #include <cereal/cereal.hpp>
 #include <cereal/types/deque.hpp>
+#include <cereal/types/polymorphic.hpp>
 #include <cereal/types/string.hpp>
 #include <cereal/types/vector.hpp>
 #endif
 
-#include "tiny_dnn/config.h"
 #include "tiny_dnn/util/aligned_allocator.h"
 #include "tiny_dnn/util/macro.h"
 #include "tiny_dnn/util/nn_error.h"
 #include "tiny_dnn/util/parallel_for.h"
+#include "tiny_dnn/util/product.h"
 #include "tiny_dnn/util/random.h"
 
 #if defined(USE_OPENCL) || defined(USE_CUDA)
@@ -45,15 +54,18 @@
 namespace tiny_dnn {
 
 ///< output label(class-index) for classification
-///< must be equal to serial_size_t, because size of last layer is equal to num.
+///< must be equal to size_t, because size of last layer is equal to num.
 /// of classes
-typedef serial_size_t label_t;
+typedef size_t label_t;
 
-typedef serial_size_t layer_size_t;  // for backward compatibility
+typedef size_t layer_size_t;  // for backward compatibility
 
 typedef std::vector<float_t, aligned_allocator<float_t, 64>> vec_t;
 
 typedef std::vector<vec_t> tensor_t;
+
+template <typename T>
+using xtensor_t = xt::xexpression<T>;
 
 enum class net_phase { train, test };
 
@@ -106,15 +118,15 @@ inline bool has_infinite(const Container &c) {
 }
 
 template <typename Container>
-serial_size_t max_size(const Container &c) {
+size_t max_size(const Container &c) {
   typedef typename Container::value_type value_t;
   const auto max_size =
     std::max_element(c.begin(), c.end(), [](const value_t &left,
                                             const value_t &right) {
       return left.size() < right.size();
     })->size();
-  assert(max_size <= std::numeric_limits<serial_size_t>::max());
-  return static_cast<serial_size_t>(max_size);
+  assert(max_size <= std::numeric_limits<size_t>::max());
+  return max_size;
 }
 
 inline std::string format_str(const char *fmt, ...) {
@@ -168,7 +180,7 @@ struct index3d {
   T depth_;
 };
 
-typedef index3d<serial_size_t> shape3d;
+typedef index3d<size_t> shape3d;
 
 template <typename T>
 bool operator==(const index3d<T> &lhs, const index3d<T> &rhs) {
@@ -196,7 +208,7 @@ std::ostream &operator<<(std::ostream &s, const index3d<T> &d) {
 template <typename Stream, typename T>
 Stream &operator<<(Stream &s, const std::vector<index3d<T>> &d) {
   s << "[";
-  for (serial_size_t i = 0; i < d.size(); i++) {
+  for (size_t i = 0; i < d.size(); i++) {
     if (i) s << ",";
     s << "[" << d[i] << "]";
   }
@@ -211,11 +223,6 @@ std::string to_string(T value) {
   os << value;
   return os.str();
 }
-
-// boilerplate to resolve dependent name
-#define CNN_USE_LAYER_MEMBERS \
-  using layer::parallelize_;  \
-  using feedforward_layer<Activation>::h_
 
 #define CNN_LOG_VECTOR(vec, name)
 /*
@@ -236,9 +243,9 @@ void CNN_LOG_VECTOR(const vec_t& vec, const std::string& name) {
 */
 
 template <typename T, typename Pred, typename Sum>
-serial_size_t sumif(const std::vector<T> &vec, Pred p, Sum s) {
-  serial_size_t sum = 0;
-  for (serial_size_t i = 0; i < static_cast<serial_size_t>(vec.size()); i++) {
+size_t sumif(const std::vector<T> &vec, Pred p, Sum s) {
+  size_t sum = 0;
+  for (size_t i = 0; i < vec.size(); i++) {
     if (p(i)) sum += s(vec[i]);
   }
   return sum;
@@ -306,31 +313,23 @@ inline std::vector<vector_type> std_input_order(bool has_bias) {
   }
 }
 
-inline std::vector<vector_type> std_output_order(bool has_activation) {
-  if (has_activation) {
-    return {vector_type::data, vector_type::aux};
-  } else {
-    return {vector_type::data};
-  }
-}
-
 inline void fill_tensor(tensor_t &tensor, float_t value) {
   for (auto &t : tensor) {
-    std::fill(t.begin(), t.end(), value);
+    vectorize::fill(&t[0], t.size(), value);
   }
 }
 
-inline void fill_tensor(tensor_t &tensor, float_t value, serial_size_t size) {
+inline void fill_tensor(tensor_t &tensor, float_t value, size_t size) {
   for (auto &t : tensor) {
     t.resize(size, value);
   }
 }
 
-inline serial_size_t conv_out_length(serial_size_t in_length,
-                                     serial_size_t window_size,
-                                     serial_size_t stride,
-                                     padding pad_type) {
-  serial_size_t output_length;
+inline size_t conv_out_length(size_t in_length,
+                              size_t window_size,
+                              size_t stride,
+                              padding pad_type) {
+  size_t output_length;
 
   if (pad_type == padding::same) {
     output_length = in_length;
@@ -345,8 +344,8 @@ inline serial_size_t conv_out_length(serial_size_t in_length,
 // get all platforms (drivers), e.g. NVIDIA
 // https://github.com/CNugteren/CLCudaAPI/blob/master/samples/device_info.cc
 
-inline void printAvailableDevice(const serial_size_t platform_id,
-                                 const serial_size_t device_id) {
+inline void printAvailableDevice(const size_t platform_id,
+                                 const size_t device_id) {
 #if defined(USE_OPENCL) || defined(USE_CUDA)
   // Initializes the CLCudaAPI platform and device. This initializes the
   // OpenCL/CUDA back-end and
@@ -392,4 +391,52 @@ std::unique_ptr<T> make_unique(Args &&... args) {
   return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
 }
 
+// TODO(Randl): Remove after full integration of xtensor
+inline xt::xarray<float_t> to_xtensor(const tensor_t &t) {
+  if (t.size() == 0) return xt::xarray<float_t>({0, 0});
+  xt::xarray<float_t> result = xt::zeros<float_t>({t.size(), t[0].size()});
+  for (size_t i = 0; i < t.size(); ++i)
+    for (size_t j = 0; j < t[0].size(); ++j) result(i, j) = t[i][j];
+  return result;
+}
+
+// TODO(Randl): Remove after full integration
+inline tensor_t from_xtensor(const xt::xarray<float_t> &t) {
+  tensor_t result;
+  for (size_t i = 0; i < t.shape()[0]; ++i) {
+    result.push_back(vec_t());
+    for (size_t j = 0; j < t.shape()[1]; ++j) result.back().push_back(t(i, j));
+  }
+  return result;
+}
+
+// check for value type being some particular type
+template <class ValType, class T>
+using value_type_is =
+  std::enable_if_t<std::is_same<T, typename ValType::value_type>::value>;
+
+template <class ValType>
+using value_is_float = value_type_is<ValType, float>;
+
+template <class ValType>
+using value_is_double = value_type_is<ValType, double>;
+
+// check that whole tuple are xexpressions
+template <typename>
+struct is_xexpression : std::false_type {};
+
+template <typename T>
+struct is_xexpression<xt::xexpression<T>> : std::true_type {};
+
+template <template <typename> class checker, typename... Ts>
+struct are_all : std::true_type {};
+
+template <template <typename> class checker, typename T0, typename... Ts>
+struct are_all<checker, T0, Ts...>
+  : std::integral_constant<bool,
+                           checker<T0>::value &&
+                             are_all<checker, Ts...>::value> {};
+
+template <typename... Ts>
+using are_all_xexpr = are_all<is_xexpression, Ts...>;
 }  // namespace tiny_dnn

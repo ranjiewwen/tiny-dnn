@@ -1,11 +1,12 @@
 /*
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
     in the LICENSE file.
 */
 #pragma once
+
 #include <algorithm>
 #include <limits>
 #include <map>
@@ -14,7 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "caffe.pb.h"
+#include "tiny_dnn/io/caffe/caffe.pb.h"
 
 #include "tiny_dnn/layers/average_pooling_layer.h"
 #include "tiny_dnn/layers/convolutional_layer.h"
@@ -27,7 +28,7 @@
 
 typedef tiny_dnn::shape3d shape_t;
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(WIN32)
 #define _NOMINMAX
 #include <fcntl.h>
 #include <io.h>
@@ -51,7 +52,7 @@ inline void read_proto_from_text(const std::string &prototxt,
                                  google::protobuf::Message *message) {
   int fd = CNN_OPEN_TXT(prototxt.c_str());
   if (fd == -1) {
-    throw nn_error("file not fonud: " + prototxt);
+    throw nn_error("file not found: " + prototxt);
   }
 
   google::protobuf::io::FileInputStream input(fd);
@@ -132,7 +133,7 @@ inline std::shared_ptr<layer> create_max_pool(layer_size_t pool_size_w,
                                               padding pad_type,
                                               const shape_t &bottom_shape,
                                               shape_t *top_shape) {
-  using max_pool = max_pooling_layer<activation::identity>;
+  using max_pool = max_pooling_layer;
   auto mp        = std::make_shared<max_pool>(
     bottom_shape.width_, bottom_shape.height_, bottom_shape.depth_, pool_size_w,
     pool_size_h, stride_w, stride_h, pad_type);
@@ -150,19 +151,19 @@ inline std::shared_ptr<layer> create_ave_pool(layer_size_t pool_size_w,
                                               padding pad_type,
                                               const shape_t &bottom_shape,
                                               shape_t *top_shape) {
-  using ave_pool = average_pooling_layer<activation::identity>;
+  using ave_pool = average_pooling_layer;
   auto ap        = std::make_shared<ave_pool>(
     bottom_shape.width_, bottom_shape.height_, bottom_shape.depth_, pool_size_w,
     pool_size_h, stride_w, stride_h, pad_type);
 
   // tiny-dnn has trainable parameter in average-pooling layer
-  float_t weight = float_t{1} / (pool_size_w * pool_size_h);
+  float_t weight = 1.0 / (pool_size_w * pool_size_h);
 
   vec_t &w = *ap->weights()[0];
   vec_t &b = *ap->weights()[1];
 
-  std::fill(w.begin(), w.end(), weight);
-  std::fill(b.begin(), b.end(), float_t{0});
+  vectorize::fill(&w[0], w.size(), weight);
+  vectorize::fill(&b[0], b.size(), float_t{0});
 
   *top_shape = ap->out_shape()[0];
   ap->init_weight();
@@ -174,8 +175,7 @@ inline std::shared_ptr<layer> create_ave_pool(layer_size_t pool_size_w,
 inline std::shared_ptr<layer> create_softmax(const caffe::LayerParameter &layer,
                                              const shape_t &bottom_shape,
                                              shape_t *) {
-  auto sm =
-    std::make_shared<linear_layer<activation::softmax>>(bottom_shape.size());
+  auto sm = std::make_shared<softmax_layer>(bottom_shape.size());
   sm->init_weight();
   return sm;
 }
@@ -183,16 +183,14 @@ inline std::shared_ptr<layer> create_softmax(const caffe::LayerParameter &layer,
 inline std::shared_ptr<layer> create_sigmoid(const caffe::LayerParameter &layer,
                                              const shape_t &bottom_shape,
                                              shape_t *) {
-  auto ce =
-    std::make_shared<linear_layer<activation::sigmoid>>(bottom_shape.size());
+  auto ce = std::make_shared<sigmoid_layer>(bottom_shape.size());
   return ce;
 }
 
 inline std::shared_ptr<layer> create_tanh(const caffe::LayerParameter &layer,
                                           const shape_t &bottom_shape,
                                           shape_t *) {
-  auto tanh =
-    std::make_shared<linear_layer<activation::tan_h>>(bottom_shape.size());
+  auto tanh = std::make_shared<tanh_layer>(bottom_shape.size());
   return tanh;
 }
 
@@ -244,19 +242,23 @@ inline std::shared_ptr<layer> create_pooling(const caffe::LayerParameter &layer,
   }
 
   if (w_pad != 0) {
-    if (w_pad == pool_size_w - 1) {
+    if (w_pad == (pool_size_w - 1) / 2) {
       pad_type = padding::same;
     } else {
       throw nn_error("unsupported padding type");
     }
+    // NB: w_pad == pool_size_w - 1 could lead to pad_type = padding::full,
+    //     if such a type existed
   }
 
   if (h_pad != 0) {
-    if (h_pad == pool_size_h - 1) {
+    if (h_pad == (pool_size_h - 1) / 2) {
       pad_type = padding::same;
     } else {
       throw nn_error("unsupported padding type");
     }
+    // NB: h_pad == pool_size_h - 1 could lead to pad_type = padding::full,
+    //     if such a type existed
   }
 
   if (pool_param.has_pool()) {
@@ -281,9 +283,15 @@ inline std::shared_ptr<layer> create_pooling(const caffe::LayerParameter &layer,
 inline std::shared_ptr<layer> create_relu(const caffe::LayerParameter &layer,
                                           const shape_t &bottom_shape,
                                           shape_t *) {
-  auto relu =
-    std::make_shared<linear_layer<activation::relu>>(bottom_shape.size());
+  auto relu = std::make_shared<relu_layer>(bottom_shape.size());
   return relu;
+}
+
+inline std::shared_ptr<layer> create_elu(const caffe::LayerParameter &layer,
+                                         const shape_t &bottom_shape,
+                                         shape_t *) {
+  auto elu = std::make_shared<elu_layer>(bottom_shape.size());
+  return elu;
 }
 
 inline std::shared_ptr<layer> create_batchnorm(
@@ -342,8 +350,7 @@ inline void load_weights_fullyconnected(const caffe::LayerParameter &src,
   const auto dst_out_size = dst->out_size();
   const auto dst_in_size  = dst->in_size();
 
-  if (dst_out_size * dst_in_size !=
-      static_cast<serial_size_t>(weights.data_size())) {
+  if (dst_out_size * dst_in_size != static_cast<size_t>(weights.data_size())) {
     throw nn_error(std::string("layer size mismatch!") + "caffe(" + src.name() +
                    "):" + to_string(weights.data_size()) + "\n" + "tiny-dnn(" +
                    dst->layer_type() + "):" + to_string(dst->weights().size()));
@@ -355,7 +362,7 @@ inline void load_weights_fullyconnected(const caffe::LayerParameter &src,
   // fill weights
   for (size_t o = 0; o < dst_out_size; o++) {
     for (size_t i = 0; i < dst_in_size; i++) {
-      // TODO: how to access to weights?
+      // TODO(karandesai): how to access to weights?
       // dst->weight()[i * dst->out_size() + o] = weights.data(curr++); //
       // transpose
       w[i * dst_out_size + o] = weights.data(curr++);  // transpose
@@ -366,7 +373,7 @@ inline void load_weights_fullyconnected(const caffe::LayerParameter &src,
   if (src.inner_product_param().bias_term()) {
     auto biases = src.blobs(1);
     for (size_t o = 0; o < dst_out_size; o++) {
-      // TODO: how to access to biases?
+      // TODO(karandesai): how to access to biases?
       // dst->bias()[o] = biases.data(o);
       b[o] = biases.data(o);
     }
@@ -377,7 +384,7 @@ inline std::shared_ptr<layer> create_fullyconnected(
   const caffe::LayerParameter &layer,
   const shape_t &bottom_shape,
   shape_t *top_shape) {
-  using fc_layer = fully_connected_layer<activation::identity>;
+  using fc_layer = fully_connected_layer;
 
   if (!layer.has_inner_product_param()) {
     throw nn_error("inner-product param missing");
@@ -408,7 +415,7 @@ inline std::shared_ptr<layer> create_fullyconnected(
     load_weights_fullyconnected(layer, ip.get());
   }
 
-  // TODO: check if it works
+  // TODO(karan): check if it works
   *top_shape = ip->out_shape()[0];
   return ip;
 }
@@ -417,20 +424,21 @@ inline void load_weights_conv(const caffe::LayerParameter &src, layer *dst) {
   // fill weight
   auto weights = src.blobs(0);
 
-  // TODO: check if it works
+  // TODO(karan): check if it works
   // int out_channels = dst->out_shape().depth_;
   // int in_channels = dst->in_shape().depth_;
   int out_channels = dst->out_data_shape()[0].depth_;
   int in_channels  = dst->in_data_shape()[0].depth_;
 
-  connection_table table;
+  core::connection_table table;
   auto conv_param = src.convolution_param();
   int dst_idx     = 0;
   int src_idx     = 0;
   int window_size = get_kernel_size_2d(conv_param);
 
   if (conv_param.has_group()) {
-    table = connection_table(conv_param.group(), in_channels, out_channels);
+    table =
+      core::connection_table(conv_param.group(), in_channels, out_channels);
   }
 
   vec_t &w = *dst->weights()[0];
@@ -444,7 +452,6 @@ inline void load_weights_conv(const caffe::LayerParameter &src, layer *dst) {
         continue;
       }
       for (int x = 0; x < window_size * window_size; x++) {
-        // TODO
         // dst->weight()[dst_idx++] = weights.data(src_idx++);
         w[dst_idx++] = weights.data(src_idx++);
       }
@@ -455,18 +462,48 @@ inline void load_weights_conv(const caffe::LayerParameter &src, layer *dst) {
   if (conv_param.bias_term()) {
     auto biases = src.blobs(1);
     for (int o = 0; o < out_channels; o++) {
-      // TODO
       // dst->bias()[o] = biases.data(o);
       b[o] = biases.data(o);
     }
   }
 }
 
+inline void load_weights_batchnorm(const caffe::LayerParameter &src,
+                                   layer *dst) {
+  if (dst->layer_type() != "batch-norm")
+    throw nn_error("batch-norm layer expected");
+
+  if (src.blobs_size() > 0) {
+    auto global_stats = src.blobs();
+    if (global_stats.size() != 3) {
+      throw nn_error("unexpected format for batch-norm statistics");
+    }
+
+    float_t scale_factor =
+      global_stats.Get(2).data(0) == 0 ? 0 : 1 / global_stats.Get(2).data(0);
+
+    int in_channels = dst->in_shape().at(0).depth_;
+    vec_t mean(in_channels);
+    vec_t variance(in_channels);
+
+    for (size_t i = 0; i < mean.size(); i++) {
+      mean[i]     = global_stats.Get(0).data(i) * scale_factor;
+      variance[i] = global_stats.Get(1).data(i) * scale_factor;
+    }
+    auto bnl = dynamic_cast<batch_normalization_layer *>(dst);
+    bnl->set_mean(mean);
+    bnl->set_variance(variance);
+
+  } else {
+    throw nn_error("batch-norm layer missing blobs");
+  }
+
+  return;
+}
+
 inline void load_weights_pool(const caffe::LayerParameter &src, layer *dst) {
   auto pool_param = src.pooling_param();
 
-  // TODO
-  // if (dst->weight().size()) {
   if (dst->weights().size()) {
     layer_size_t pool_size = 0;
 
@@ -475,9 +512,9 @@ inline void load_weights_pool(const caffe::LayerParameter &src, layer *dst) {
     }
 
     // tiny-dnn has trainable parameter in average-pooling layer
-    float_t weight = float_t{1} / sqr(pool_size);
+    float_t weight = 1.0 / sqr(pool_size);
 
-    // TODO
+    // TODO(karan)
     /*if (!dst->weight().empty()) {
         std::fill(dst->weight().begin(), dst->weight().end(), weight);
     }
@@ -490,10 +527,10 @@ inline void load_weights_pool(const caffe::LayerParameter &src, layer *dst) {
     vec_t &b = *dst->weights()[1];
 
     if (!w.empty()) {
-      std::fill(w.begin(), w.end(), weight);
+      vectorize::fill(&w[0], w.size(), weight);
     }
     if (!b.empty()) {
-      std::fill(b.begin(), b.end(), float_t{0});
+      vectorize::fill(&b[0], b.size(), float_t{0});
       // dst->init_bias();
     }
   }
@@ -502,8 +539,6 @@ inline void load_weights_pool(const caffe::LayerParameter &src, layer *dst) {
 inline std::shared_ptr<layer> create_lrn(const caffe::LayerParameter &layer,
                                          const shape_t &bottom_shape,
                                          shape_t *top_shape) {
-  using lrn_layer = lrn_layer<activation::identity>;
-
   if (!layer.has_lrn_param()) {
     throw nn_error("lrn param missing");
   }
@@ -551,7 +586,7 @@ inline std::shared_ptr<layer> create_convlayer(
   const caffe::LayerParameter &layer,
   const shape_t &bottom_shape,
   shape_t *top_shape) {
-  using conv_layer = convolutional_layer<activation::identity>;
+  using conv_layer = convolutional_layer;
 
   if (!layer.has_convolution_param()) {
     throw nn_error("convolution param missing");
@@ -563,7 +598,7 @@ inline std::shared_ptr<layer> create_convlayer(
   layer_size_t w_stride = 1, h_stride = 1;
   bool has_bias    = true;
   padding pad_type = padding::valid;
-  connection_table table;
+  core::connection_table table;
 
   auto conv_param = layer.convolution_param();
 
@@ -611,7 +646,8 @@ inline std::shared_ptr<layer> create_convlayer(
 
   // group
   if (conv_param.has_group()) {
-    table = connection_table(conv_param.group(), in_channels, out_channels);
+    table =
+      core::connection_table(conv_param.group(), in_channels, out_channels);
   }
 
   auto conv = std::make_shared<conv_layer>(
@@ -639,7 +675,7 @@ inline std::shared_ptr<layer> create_deconvlayer(
   const caffe::LayerParameter &layer,
   const shape_t &bottom_shape,
   shape_t *top_shape) {
-  using deconv_layer = deconvolutional_layer<activation::identity>;
+  using deconv_layer = deconvolutional_layer;
 
   if (!layer.has_convolution_param()) {
     throw nn_error("deconvolution param missing");
@@ -651,7 +687,7 @@ inline std::shared_ptr<layer> create_deconvlayer(
   layer_size_t w_stride = 1, h_stride = 1;
   bool has_bias    = true;
   padding pad_type = padding::valid;
-  connection_table table;
+  core::connection_table table;
 
   auto deconv_param = layer.convolution_param();
 
@@ -699,7 +735,8 @@ inline std::shared_ptr<layer> create_deconvlayer(
 
   // group
   if (deconv_param.has_group()) {
-    table = connection_table(deconv_param.group(), in_channels, out_channels);
+    table =
+      core::connection_table(deconv_param.group(), in_channels, out_channels);
   }
 
   auto deconv = std::make_shared<deconv_layer>(
@@ -718,14 +755,14 @@ inline std::shared_ptr<layer> create_deconvlayer(
   if (layer.blobs_size() > 0) {  // blobs(0)...weight, blobs(1)...bias
     load_weights_conv(layer, deconv.get());
   }
-  // TODO
-  //*top_shape = deconv->out_shape();
   *top_shape = deconv->out_shape()[0];
   return deconv;
 }
 
 inline bool layer_skipped(const std::string &type) {
-  if (type == "Data" || type == "EuclideanLoss" || type == "Input") return true;
+  if (type == "Data" || type == "EuclideanLoss" || type == "Input" ||
+      type == "HDF5Data" || type == "Split" || type == "Accuracy")
+    return true;
   return false;
 }
 
@@ -735,6 +772,7 @@ inline bool layer_has_weights(const std::string &type) {
                                       "LRN",
                                       "Dropout",
                                       "ReLU",
+                                      "ELU",
                                       "Sigmoid",
                                       "TanH",
                                       "Softmax"};
@@ -755,6 +793,7 @@ inline bool layer_supported(const std::string &type) {
                                     "SoftmaxWithLoss",
                                     "SigmoidCrossEntropyLoss",
                                     "ReLU",
+                                    "ELU",
                                     "Sigmoid",
                                     "TanH",
                                     "Softmax",
@@ -773,7 +812,8 @@ inline bool layer_match(const std::string &caffetype,
                                   {"Convolution", "conv"},
                                   {"Deconvolution", "deconv"},
                                   {"Pooling", "ave-pool"},
-                                  {"Pooling", "max-pool"}};
+                                  {"Pooling", "max-pool"},
+                                  {"BatchNorm", "batch-norm"}};
 
   for (size_t i = 0; i < sizeof(conversions) / sizeof(conversions[0]); i++) {
     if (conversions[i][0] == caffetype && conversions[i][1] == tiny_dnn_type)
@@ -827,6 +867,10 @@ inline std::shared_ptr<layer> create(const caffe::LayerParameter &layer,
     return detail::create_relu(layer, in_shape, out_shape);
   }
 
+  if (layer_type == "ELU") {
+    return detail::create_elu(layer, in_shape, out_shape);
+  }
+
   if (layer_type == "TanH") {
     return detail::create_tanh(layer, in_shape, out_shape);
   }
@@ -847,6 +891,7 @@ inline void load(const caffe::LayerParameter &src, layer *dst) {
   factory_registry["Deconvolution"] = detail::load_weights_conv;
   factory_registry["InnerProduct"]  = detail::load_weights_fullyconnected;
   factory_registry["Pooling"]       = detail::load_weights_pool;
+  factory_registry["BatchNorm"]     = detail::load_weights_batchnorm;
 
   if (factory_registry.find(src.type()) == factory_registry.end()) {
     throw nn_error("layer parser not found");
@@ -1011,9 +1056,10 @@ class caffe_layer_vector {
       dst->mutable_param(i)->set_name(old.param(i));
     }
 
-#define COPY_PARAM(name)        \
-  if (old.has_##name##_param()) \
-  dst->mutable_##name##_param()->CopyFrom(old.name##_param())
+#define COPY_PARAM(name)                                         \
+  if (old.has_##name##_param()) {                                \
+    dst->mutable_##name##_param()->CopyFrom(old.name##_param()); \
+  }
 
     COPY_PARAM(accuracy);
     COPY_PARAM(argmax);

@@ -1,28 +1,33 @@
 /*
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
     in the LICENSE file.
 */
 #pragma once
+
+#include <gtest/gtest.h>
+
 #include <deque>
-#include "gtest/gtest.h"
-#include "testhelper.h"
+#include <vector>
+
+#include "test/testhelper.h"
 #include "tiny_dnn/tiny_dnn.h"
 
 namespace tiny_dnn {
 
 TEST(dropout, randomized) {
   int num_units                  = 10000;
-  tiny_dnn::float_t dropout_rate = 0.1f;
+  tiny_dnn::float_t dropout_rate = 0.1;
   dropout_layer l(num_units, dropout_rate, net_phase::train);
   vec_t v(num_units, 1.0);
 
-  l.forward({{v}});
+  std::vector<const tensor_t*> out;
+  l.forward({{v}}, out);
   const auto mask1 = l.get_mask(0);
 
-  l.forward({{v}});
+  l.forward({{v}}, out);
   const auto mask2 = l.get_mask(0);
 
   // mask should change for each fprop
@@ -49,4 +54,62 @@ TEST(dropout, read_write) {
   serialization_test(l1, l2);
 }
 
-}  // namespace tiny-dnn
+TEST(dropout, full_net) {
+  network<sequential> nn;
+  adam optimizer;
+
+  vec_t a(4, 0.0), t(2, 0.0), a2(4, 0.0), t2(2, 0.0);
+
+  // clang-format off
+  a[0] = 3.0; a[1] = 1.0; a[2] = -1.0; a[3] = 4.0;
+  t[0] = 0.3; t[1] = 0.7;
+
+  a2[0] = 1.0; a2[1] = 0.0; a2[2] = 4.0; a2[3] = 2.0;
+  t2[0] = 0.6; t2[1] = 0.0;
+  // clang-format on
+
+  std::vector<vec_t> data, train;
+
+  for (int i = 0; i < 100; i++) {
+    data.push_back(a);
+    data.push_back(a2);
+    train.push_back(t);
+    train.push_back(t2);
+  }
+
+  nn << fully_connected_layer(4, 10) << relu() << dropout_layer(10, 0.5)
+     << fully_connected_layer(10, 2) << sigmoid();
+
+  nn.train<mse>(optimizer, data, train, 1, 10);
+  // batch = 11,20,50
+}
+
+TEST(dropout, full_net_batch) {
+  network<sequential> nn;
+  adam optimizer;
+
+  vec_t a(4, 0.0), t(2, 0.0), a2(4, 0.0), t2(2, 0.0);
+
+  // clang-format off
+  a[0] = 3.0; a[1] = 1.0; a[2] = -1.0; a[3] = 4.0;
+  t[0] = 0.3; t[1] = 0.7;
+
+  a2[0] = 1.0; a2[1] = 0.0; a2[2] = 4.0; a2[3] = 2.0;
+  t2[0] = 0.6; t2[1] = 0.0;
+  // clang-format on
+
+  std::vector<vec_t> data, train;
+
+  for (int i = 0; i < 100; i++) {
+    data.push_back(a);
+    data.push_back(a2);
+    train.push_back(t);
+    train.push_back(t2);
+  }
+
+  nn << fully_connected_layer(4, 10) << relu() << dropout_layer(10, 0.5)
+     << fully_connected_layer(10, 2) << sigmoid();
+
+  nn.train<mse>(optimizer, data, train, 20, 10);
+}
+}  // namespace tiny_dnn

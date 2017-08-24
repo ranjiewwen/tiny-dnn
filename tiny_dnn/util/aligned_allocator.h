@@ -1,19 +1,25 @@
 /*
-    Copyright (c) 2016, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
     in the LICENSE file.
 */
 #pragma once
+
 #include <stdlib.h>
+#include <string>
+#include <utility>
+
 #ifdef _WIN32
 #include <malloc.h>
 #endif
+
 #ifdef __MINGW32__
 #include <mm_malloc.h>
 #endif
-#include "nn_error.h"
+
+#include "tiny_dnn/util/nn_error.h"
 
 namespace tiny_dnn {
 
@@ -62,15 +68,11 @@ class aligned_allocator {
     ::new (p) U(value);
   }
 
-#if defined(_MSC_VER) && _MSC_VER <= 1800
-// -vc2013 doesn't support variadic templates
-#else
   template <class U, class... Args>
   void construct(U *ptr, Args &&... args) {
     void *p = ptr;
     ::new (p) U(std::forward<Args>(args)...);
   }
-#endif
 
   template <class U>
   void construct(U *ptr) {

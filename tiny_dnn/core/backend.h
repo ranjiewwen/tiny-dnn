@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2016, Taiga Nomi, Edgar Riba
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
@@ -7,15 +7,18 @@
 */
 #pragma once
 
+#include <vector>
+
 #include "tiny_dnn/core/params/conv_params.h"
 #include "tiny_dnn/core/params/deconv_params.h"
 #include "tiny_dnn/core/params/fully_params.h"
+#include "tiny_dnn/core/params/global_avepool_params.h"
 #include "tiny_dnn/core/params/maxpool_params.h"
 #include "tiny_dnn/layers/layer.h"
 #include "tiny_dnn/node.h"
 
 #ifdef CNN_USE_NNPACK
-#include "nnpack.h"
+#include <nnpack.h>
 #endif
 
 namespace tiny_dnn {
@@ -156,13 +159,13 @@ class backend {
 
   context *get_context() const { return ctx_; }
 
-  void set_layer(layerptr_t layer) { layer_ = layer; }
+  void set_layer(layer *layer) { layer_ = layer; }
 
   virtual backend_t type() const = 0;
 
  protected:
   context *ctx_;
-  layerptr_t layer_;
+  layer *layer_;
 };
 
 }  // namespace core

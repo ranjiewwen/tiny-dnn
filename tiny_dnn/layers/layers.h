@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
@@ -14,8 +14,8 @@
 #include "tiny_dnn/layers/convolutional_layer.h"
 #include "tiny_dnn/layers/deconvolutional_layer.h"
 #include "tiny_dnn/layers/dropout_layer.h"
-#include "tiny_dnn/layers/feedforward_layer.h"
 #include "tiny_dnn/layers/fully_connected_layer.h"
+#include "tiny_dnn/layers/global_average_pooling_layer.h"
 #include "tiny_dnn/layers/layer.h"
 #include "tiny_dnn/layers/linear_layer.h"
 #include "tiny_dnn/layers/lrn_layer.h"
@@ -26,4 +26,5 @@
 #include "tiny_dnn/layers/quantized_convolutional_layer.h"
 #include "tiny_dnn/layers/quantized_deconvolutional_layer.h"
 #include "tiny_dnn/layers/quantized_fully_connected_layer.h"
+#include "tiny_dnn/layers/recurrent_cell_layer.h"
 #include "tiny_dnn/layers/slice_layer.h"

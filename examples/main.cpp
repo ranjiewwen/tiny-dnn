@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
@@ -12,12 +12,6 @@
 #include <vector>
 
 #include "tiny_dnn/tiny_dnn.h"
-
-using namespace tiny_dnn;
-using namespace tiny_dnn::activation;
-using namespace tiny_dnn::layers;
-
-using namespace std;
 
 void sample1_convnet(const string& data_dir = "../data");
 void sample2_mlp(const string& data_dir = "../data");
@@ -40,36 +34,40 @@ int main(int argc, char** argv) {
 
 ///////////////////////////////////////////////////////////////////////////////
 // learning convolutional neural networks (LeNet-5 like architecture)
-void sample1_convnet(const string& data_dir) {
+void sample1_convnet(const std::string& data_dir) {
   // construct LeNet-5 architecture
-  network<sequential> nn;
-  adagrad optimizer;
+  tiny_dnn::network<sequential> nn;
+  tiny_dnn::adagrad optimizer;
 
 // connection table [Y.Lecun, 1998 Table.1]
 #define O true
 #define X false
   // clang-format off
-    static const bool connection[] = {
-        O, X, X, X, O, O, O, X, X, O, O, O, O, X, O, O,
-        O, O, X, X, X, O, O, O, X, X, O, O, O, O, X, O,
-        O, O, O, X, X, X, O, O, O, X, X, O, X, O, O, O,
-        X, O, O, O, X, X, O, O, O, O, X, X, O, X, O, O,
-        X, X, O, O, O, X, X, O, O, O, O, X, O, O, X, O,
-        X, X, X, O, O, O, X, X, O, O, O, O, X, O, O, O
-    };
+static const bool connection[] = {
+  O, X, X, X, O, O, O, X, X, O, O, O, O, X, O, O,
+  O, O, X, X, X, O, O, O, X, X, O, O, O, O, X, O,
+  O, O, O, X, X, X, O, O, O, X, X, O, X, O, O, O,
+  X, O, O, O, X, X, O, O, O, O, X, X, O, X, O, O,
+  X, X, O, O, O, X, X, O, O, O, O, X, O, O, X, O,
+  X, X, X, O, O, O, X, X, O, O, O, O, X, O, O, O
+};
 // clang-format on
 #undef O
 #undef X
 
-  nn << convolutional_layer<tan_h>(32, 32, 5, 1,
-                                   6) /* 32x32 in, 5x5 kernel, 1-6 fmaps conv */
-     << average_pooling_layer<tan_h>(28, 28, 6,
-                                     2) /* 28x28 in, 6 fmaps, 2x2 subsampling */
-     << convolutional_layer<tan_h>(14, 14, 5, 6, 16,
-                                   connection_table(connection, 6, 16))
-     << average_pooling_layer<tan_h>(10, 10, 16, 2)
-     << convolutional_layer<tan_h>(5, 5, 5, 16, 120)
-     << fully_connected_layer<tan_h>(120, 10);
+  using conv     = tiny_dnn::layers::conv;
+  using ave_pool = tiny_dnn::layers::ave_pool;
+  using fc       = tiny_dnn::layers::fc;
+  using tanh     = tiny_dnn::activation::tanh;
+  using tiny_dnn::core::connection_table;
+
+  nn << conv(32, 32, 5, 1, 6) /* 32x32 in, 5x5 kernel, 1-6 fmaps conv */
+     << tanh(28, 28, 6)
+     << ave_pool(28, 28, 6, 2) /* 28x28 in, 6 fmaps, 2x2 subsampling */
+     << tanh(14, 14, 6)
+     << conv(14, 14, 5, 6, 16, connection_table(connection, 6, 16))
+     << tanh(10, 10, 16) << ave_pool(10, 10, 16, 2) << tanh(5, 5, 16)
+     << conv(5, 5, 5, 16, 120) << tanh(1, 1, 120) << fc(120, 10) << tanh(10);
 
   std::cout << "load models..." << std::endl;
 
@@ -126,14 +124,14 @@ void sample1_convnet(const string& data_dir) {
 ///////////////////////////////////////////////////////////////////////////////
 // learning 3-Layer Networks
 void sample2_mlp(const string& data_dir) {
-  const serial_size_t num_hidden_units = 500;
+  const size_t num_hidden_units = 500;
 
 #if defined(_MSC_VER) && _MSC_VER < 1800
   // initializer-list is not supported
   int num_units[] = {28 * 28, num_hidden_units, 10};
-  auto nn         = make_mlp<tan_h>(num_units, num_units + 3);
+  auto nn         = make_mlp<tanh_layer>(num_units, num_units + 3);
 #else
-  auto nn = make_mlp<tan_h>({28 * 28, num_hidden_units, 10});
+  auto nn = make_mlp<tanh_layer>({28 * 28, num_hidden_units, 10});
 #endif
   gradient_descent optimizer;
 
@@ -184,9 +182,9 @@ void sample3_dae() {
 #if defined(_MSC_VER) && _MSC_VER < 1800
   // initializer-list is not supported
   int num_units[] = {100, 400, 100};
-  auto nn         = make_mlp<tan_h>(num_units, num_units + 3);
+  auto nn         = make_mlp<tanh>(num_units, num_units + 3);
 #else
-  auto nn = make_mlp<tan_h>({100, 400, 100});
+  auto nn = make_mlp<tanh_layer>({100, 400, 100});
 #endif
 
   std::vector<vec_t> train_data_original;
@@ -209,17 +207,19 @@ void sample3_dae() {
 // dropout-learning
 
 void sample4_dropout(const string& data_dir) {
-  typedef network<sequential> Network;
-  Network nn;
-  serial_size_t input_dim    = 28 * 28;
-  serial_size_t hidden_units = 800;
-  serial_size_t output_dim   = 10;
+  using network = network<sequential>;
+  network nn;
+  size_t input_dim    = 28 * 28;
+  size_t hidden_units = 800;
+  size_t output_dim   = 10;
   gradient_descent optimizer;
 
-  fully_connected_layer<tan_h> f1(input_dim, hidden_units);
+  fully_connected_layer f1(input_dim, hidden_units);
+  tanh_layer th1(hidden_units);
   dropout_layer dropout(hidden_units, 0.5);
-  fully_connected_layer<tan_h> f2(hidden_units, output_dim);
-  nn << f1 << dropout << f2;
+  fully_connected_layer f2(hidden_units, output_dim);
+  tanh_layer th2(output_dim);
+  nn << f1 << th1 << dropout << f2 << th2;
 
   optimizer.alpha  = 0.003;  // TODO(nyanp): not optimized
   optimizer.lambda = 0.0;
@@ -277,9 +277,9 @@ void sample4_dropout(const string& data_dir) {
 
 void sample5_unbalanced_training_data(const string& data_dir) {
   // keep the network relatively simple
-  const serial_size_t num_hidden_units = 20;
-  auto nn_standard = make_mlp<tan_h>({28 * 28, num_hidden_units, 10});
-  auto nn_balanced = make_mlp<tan_h>({28 * 28, num_hidden_units, 10});
+  const size_t num_hidden_units = 20;
+  auto nn_standard = make_mlp<tanh_layer>({28 * 28, num_hidden_units, 10});
+  auto nn_balanced = make_mlp<tanh_layer>({28 * 28, num_hidden_units, 10});
   gradient_descent optimizer;
 
   // load MNIST dataset
@@ -378,7 +378,7 @@ void sample6_graph() {
   auto in1   = std::make_shared<input_layer>(shape3d(3, 1, 1));
   auto in2   = std::make_shared<input_layer>(shape3d(3, 1, 1));
   auto added = std::make_shared<add>(2, 3);
-  auto out   = std::make_shared<linear_layer<relu>>(3);
+  auto out   = std::make_shared<linear_layer>(3);
 
   // connect
   (in1, in2) << added;

@@ -1,18 +1,21 @@
 /*
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
     in the LICENSE file.
 */
 #pragma once
+
 #include <algorithm>
 #include <iomanip>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <queue>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -20,11 +23,11 @@
 #include "tiny_dnn/core/framework/device.fwd.h"
 #include "tiny_dnn/node.h"
 
+#include "tiny_dnn/util/parallel_for.h"
 #include "tiny_dnn/util/product.h"
 #include "tiny_dnn/util/util.h"
 #include "tiny_dnn/util/weight_init.h"
 
-#include "tiny_dnn/activations/activation_function.h"
 #include "tiny_dnn/optimizers/optimizer.h"
 
 #ifdef DNN_USE_IMAGE_API
@@ -59,12 +62,11 @@ class layer : public node {
    **/
   layer(const std::vector<vector_type> &in_type,
         const std::vector<vector_type> &out_type)
-    : node(static_cast<serial_size_t>(in_type.size()),
-           static_cast<serial_size_t>(out_type.size())),
+    : node(in_type.size(), out_type.size()),
       initialized_(false),
       parallelize_(true),
-      in_channels_(static_cast<serial_size_t>(in_type.size())),
-      out_channels_(static_cast<serial_size_t>(out_type.size())),
+      in_channels_(in_type.size()),
+      out_channels_(out_type.size()),
       in_type_(in_type),
       out_type_(out_type) {
     weight_init_ = std::make_shared<weight_init::xavier>();
@@ -75,10 +77,8 @@ class layer : public node {
   layer(const layer &) = default;
   layer &operator=(const layer &) = default;
 
-#ifdef CNN_USE_DEFAULT_MOVE_CONSTRUCTORS
   layer(layer &&) = default;
   layer &operator=(layer &&) = default;
-#endif
 
   void set_parallelize(bool parallelize) { parallelize_ = parallelize; }
 
@@ -117,22 +117,22 @@ class layer : public node {
   std::shared_ptr<core::backend> backend() { return backend_; }
 
   ///< number of incoming edges in this layer
-  serial_size_t in_channels() const { return in_channels_; }
+  size_t in_channels() const { return in_channels_; }
 
   ///< number of outgoing edges in this layer
-  serial_size_t out_channels() const { return out_channels_; }
+  size_t out_channels() const { return out_channels_; }
 
-  serial_size_t in_data_size() const {
+  size_t in_data_size() const {
     return sumif(in_shape(),
-                 [&](serial_size_t i) {  // NOLINT
+                 [&](size_t i) {  // NOLINT
                    return in_type_[i] == vector_type::data;
                  },
                  [](const shape3d &s) { return s.size(); });
   }
 
-  serial_size_t out_data_size() const {
+  size_t out_data_size() const {
     return sumif(out_shape(),
-                 [&](serial_size_t i) {  // NOLINT
+                 [&](size_t i) {  // NOLINT
                    return out_type_[i] == vector_type::data;
                  },
                  [](const shape3d &s) { return s.size(); });
@@ -151,14 +151,14 @@ class layer : public node {
   }
 
   ///! @deprecated use in_data_size() instead
-  serial_size_t in_size() const { return in_data_size(); }
+  size_t in_size() const { return in_data_size(); }
 
   ///! @deprecated use out_data_size() instead
-  serial_size_t out_size() const { return out_data_size(); }
+  size_t out_size() const { return out_data_size(); }
 
   std::vector<const vec_t *> weights() const {
     std::vector<const vec_t *> v;
-    for (serial_size_t i = 0; i < in_channels_; i++) {
+    for (size_t i = 0; i < in_channels_; i++) {
       if (is_trainable_weight(in_type_[i])) {
         v.push_back(get_weight_data(i));
       }
@@ -168,7 +168,7 @@ class layer : public node {
 
   std::vector<vec_t *> weights() {
     std::vector<vec_t *> v;
-    for (serial_size_t i = 0; i < in_channels_; i++) {
+    for (size_t i = 0; i < in_channels_; i++) {
       if (is_trainable_weight(in_type_[i])) {
         v.push_back(get_weight_data(i));
       }
@@ -178,7 +178,7 @@ class layer : public node {
 
   std::vector<tensor_t *> weights_grads() {
     std::vector<tensor_t *> v;
-    for (serial_size_t i = 0; i < in_channels_; i++) {
+    for (size_t i = 0; i < in_channels_; i++) {
       if (is_trainable_weight(in_type_[i])) {
         v.push_back(ith_in_node(i)->get_gradient());
       }
@@ -188,7 +188,7 @@ class layer : public node {
 
   std::vector<edgeptr_t> inputs() {
     std::vector<edgeptr_t> nodes(in_channels_);
-    for (serial_size_t i = 0; i < in_channels_; i++) {
+    for (size_t i = 0; i < in_channels_; i++) {
       nodes[i] = ith_in_node(i);
     }
     return nodes;
@@ -196,7 +196,7 @@ class layer : public node {
 
   std::vector<edgeptr_t> outputs() {
     std::vector<edgeptr_t> nodes(out_channels_);
-    for (serial_size_t i = 0; i < out_channels_; i++) {
+    for (size_t i = 0; i < out_channels_; i++) {
       nodes[i] = ith_out_node(i);
     }
     return nodes;
@@ -204,39 +204,59 @@ class layer : public node {
 
   std::vector<edgeptr_t> outputs() const {
     std::vector<edgeptr_t> nodes(out_channels_);
-    for (serial_size_t i = 0; i < out_channels_; i++) {
-      nodes[i] = const_cast<layerptr_t>(this)->ith_out_node(i);
+    for (size_t i = 0; i < out_channels_; i++) {
+      nodes[i] = const_cast<layer *>(this)->ith_out_node(i);
     }
     return nodes;
   }
 
-  void set_out_grads(const std::vector<tensor_t> &grad) {
-    serial_size_t j = 0;
-    for (serial_size_t i = 0; i < out_channels_; i++) {
+  void set_out_grads(const std::vector<const vec_t *> *grad, size_t cnt) {
+    CNN_UNREFERENCED_PARAMETER(cnt);
+    size_t n = 0;
+    for (size_t i = 0; i < out_channels_; i++) {
       if (out_type_[i] != vector_type::data) continue;
-      assert(j < grad.size());
-      *ith_out_node(i)->get_gradient() = grad[j++];
-    }
-  }
-
-  void set_in_data(const std::vector<tensor_t> &data) {
-    serial_size_t j = 0;
-    for (serial_size_t i = 0; i < in_channels_; i++) {
-      if (in_type_[i] != vector_type::data) continue;
-      assert(j < data.size());
-      *ith_in_node(i)->get_data() = data[j++];
-    }
-  }
-
-  std::vector<tensor_t> output() const {
-    std::vector<tensor_t> out;
-    for (serial_size_t i = 0; i < out_channels_; i++) {
-      if (out_type_[i] == vector_type::data) {
-        out.push_back(
-          *(const_cast<layerptr_t>(this))->ith_out_node(i)->get_data());
+      tensor_t &dst_grad = *ith_out_node(i)->get_gradient();
+      assert(n < cnt);
+      const auto &src_grad = grad[n++];
+      size_t sz            = src_grad.size();
+      dst_grad.resize(sz);
+      for (size_t j = 0; j < sz; ++j) {
+        assert(dst_grad[j].size() == src_grad[j]->size());
+        dst_grad[j] = *src_grad[j];
       }
     }
-    return out;
+  }
+
+  void set_in_data(const std::vector<const vec_t *> *data, size_t cnt) {
+    CNN_UNREFERENCED_PARAMETER(cnt);
+    size_t n = 0;
+    for (size_t i = 0; i < in_channels_; i++) {
+      if (in_type_[i] != vector_type::data) continue;
+      tensor_t &dst_data = *ith_in_node(i)->get_data();
+      size_t in_size     = ith_in_node(i)->shape().size();
+      assert(n < cnt);
+      const auto &src_data = data[n++];
+      size_t sz            = src_data.size();
+      dst_data.resize(sz);
+
+      CNN_UNREFERENCED_PARAMETER(in_size);
+
+      for (size_t j = 0; j < sz; ++j) {
+        assert(
+          src_data[j]->size() ==
+          in_size);  // checking if training data is consistent with layer shape
+        dst_data[j] = *src_data[j];
+      }
+    }
+  }
+
+  void output(std::vector<const tensor_t *> &out) const {
+    out.clear();
+    for (size_t i = 0; i < out_channels_; i++) {
+      if (out_type_[i] == vector_type::data) {
+        out.push_back(ith_out_node(i)->get_data());
+      }
+    }
   }
 
   std::vector<vector_type> in_types() const { return in_type_; }
@@ -263,6 +283,16 @@ class layer : public node {
   virtual std::vector<shape3d> in_shape() const = 0;
 
   /**
+   * set input shape of a layer (only used internally while shape inferring)
+   */
+  virtual void set_in_shape(const shape3d &in_shape) {
+    CNN_UNREFERENCED_PARAMETER(in_shape);
+    throw nn_error(
+      "Can't set shape. Shape inferring not applicable for this "
+      "layer (yet).");
+  }
+
+  /**
    * array of output shapes (width x height x depth)
    **/
   virtual std::vector<shape3d> out_shape() const = 0;
@@ -281,7 +311,11 @@ class layer : public node {
    *is
    *important
    **/
-  virtual serial_size_t fan_in_size() const { return in_shape()[0].width_; }
+  virtual size_t fan_in_size() const { return in_shape()[0].width_; }
+  // override to allow initialization of multiple size weight matrices.
+  virtual size_t fan_in_size(size_t) const {
+    return fan_in_size();  // fallback to single weight matrix.
+  }
 
   /**
    * number of outgoing connections for each input unit
@@ -292,7 +326,11 @@ class layer : public node {
    *is
    *important
    **/
-  virtual serial_size_t fan_out_size() const { return out_shape()[0].width_; }
+  virtual size_t fan_out_size() const { return out_shape()[0].width_; }
+  // override to allow initialization of multiple size weight vectors.
+  virtual size_t fan_out_size(size_t) const {
+    return fan_out_size();  // fallback to single weight matrix
+  }
 
   /////////////////////////////////////////////////////////////////////////
   // setter
@@ -320,28 +358,26 @@ class layer : public node {
     return *this;
   }
 
-  /////////////////////////////////////////////////////////////////////////
-  // save/load
-  template <typename Archive>
-  void serialize(Archive &ar) {
-    auto all_weights = weights();
-    for (auto weight : all_weights) {
-      ar(*weight);
-    }
-    initialized_ = true;
-  }
-
-  virtual void save(std::ostream &os) const {  // NOLINT
-    /*if (is_exploded()) {
-        throw nn_error("failed to save weights because of infinite weight");
+  virtual void save(
+    std::ostream &os,
+    const int precision = std::numeric_limits<float_t>::digits10 + 2
+    /*by default, we want there to be enough precision*/) const {
+    /*
+     if (is_exploded()) {
+       throw nn_error("failed to save weights because of infinite weight");
     }*/
+    os << std::setprecision(precision);
     auto all_weights = weights();
     for (auto &weight : all_weights) {
       for (auto w : *weight) os << w << " ";
     }
   }
 
-  virtual void load(std::istream &is) {  // NOLINT
+  virtual void load(
+    std::istream &is,
+    const int precision = std::numeric_limits<float_t>::digits10 + 2
+    /*by default, we want there to be enough precision*/) {  // NOLINT
+    is >> std::setprecision(precision);
     auto all_weights = weights();
     for (auto &weight : all_weights) {
       for (auto &w : *weight) is >> w;
@@ -408,8 +444,8 @@ class layer : public node {
   virtual void post_update() {}
 
   /**
-  * notify changing context (train <=> test)
-  **/
+   * notify changing context (train <=> test)
+   **/
   virtual void set_context(net_phase ctx) { CNN_UNREFERENCED_PARAMETER(ctx); }
 
   /* @brief Performs layer forward operation given an input tensor and
@@ -426,24 +462,44 @@ class layer : public node {
    * graph. Will be this overhead reduced once we have the Tensor
    * class integrated?
    */
-  std::vector<tensor_t> forward(
-    const std::vector<tensor_t> &input) {  // for test
+  void forward(const std::vector<tensor_t> &input,
+               std::vector<const tensor_t *> &out) {  // for test
     // allocate data in the computational graph without
     // resetting the weights.
     setup(false);
+
+    std::vector<std::vector<const vec_t *>> input2;
+    input2.resize(input.size());
+    for (size_t i = 0; i < input.size(); ++i) {
+      input2[i].resize(input[i].size());
+      for (size_t j = 0; j < input[i].size(); ++j) {
+        input2[i][j] = &input[i][j];
+      }
+    }
+
     // the incoming data is forwarded to the computational graph.
-    set_in_data(input);
+    set_in_data(&input2[0], input2.size());
     // pick up the data from the computational graph and perform
     // computation.
     forward();
     // retrieve computed data and return values in form of 4D tensor.
-    return output();
+    output(out);
   }
 
   std::vector<tensor_t> backward(
     const std::vector<tensor_t> &out_grads) {  // for test
     setup(false);
-    set_out_grads(out_grads);
+
+    std::vector<std::vector<const vec_t *>> grads2;
+    grads2.resize(out_grads.size());
+    for (size_t i = 0; i < out_grads.size(); ++i) {
+      grads2[i].resize(out_grads[i].size());
+      for (size_t j = 0; j < out_grads[i].size(); ++j) {
+        grads2[i][j] = &out_grads[i][j];
+      }
+    }
+
+    set_out_grads(&grads2[0], grads2.size());
     backward();
     return map_<tensor_t>(inputs(),
                           [](edgeptr_t e) { return *e->get_gradient(); });
@@ -470,49 +526,52 @@ class layer : public node {
    */
   void forward() {
     // the computational graph
-    std::vector<tensor_t *> in_data(in_channels_), out_data(out_channels_);
+    fwd_in_data_.resize(in_channels_);
+    fwd_out_data_.resize(out_channels_);
 
     // Organize input/output vectors from storage (computational graph).
     // Internally ith_in_node() will create a connection/edge in the
     // computational graph and will allocate memory in case that it's not
     // done yet.
-    for (serial_size_t i = 0; i < in_channels_; i++) {
-      in_data[i] = ith_in_node(i)->get_data();
+    for (size_t i = 0; i < in_channels_; i++) {
+      fwd_in_data_[i] = ith_in_node(i)->get_data();
     }
 
     // resize outs and stuff to have room for every input sample in
     // the batch
-    set_sample_count(static_cast<serial_size_t>(in_data[0]->size()));
+    set_sample_count(fwd_in_data_[0]->size());
 
     // Internally ith_out_node() will create a connection/edge to the
     // computational graph and will allocate memory in case that it's not
     // done yet. In addition, gradient vector are initialized to default
     // values.
-    for (serial_size_t i = 0; i < out_channels_; i++) {
-      out_data[i] = ith_out_node(i)->get_data();
+    for (size_t i = 0; i < out_channels_; i++) {
+      fwd_out_data_[i] = ith_out_node(i)->get_data();
       ith_out_node(i)->clear_grads();
     }
 
     // call the forward computation kernel/routine
-    forward_propagation(in_data, out_data);
+    forward_propagation(fwd_in_data_, fwd_out_data_);
   }
 
   void backward() {
-    std::vector<tensor_t *> in_data(in_channels_), in_grad(in_channels_),
-      out_data(out_channels_), out_grad(out_channels_);
+    bwd_in_data_.resize(in_channels_);
+    bwd_in_grad_.resize(in_channels_);
+    bwd_out_data_.resize(out_channels_);
+    bwd_out_grad_.resize(out_channels_);
 
     // organize input/output vectors from storage
-    for (serial_size_t i = 0; i < in_channels_; i++) {
-      const auto &nd = ith_in_node(i);
-      in_data[i]     = nd->get_data();
-      in_grad[i]     = nd->get_gradient();
+    for (size_t i = 0; i < in_channels_; i++) {
+      const auto &nd  = ith_in_node(i);
+      bwd_in_data_[i] = nd->get_data();
+      bwd_in_grad_[i] = nd->get_gradient();
     }
-    for (serial_size_t i = 0; i < out_channels_; i++) {
-      const auto &nd = ith_out_node(i);
-      out_data[i]    = nd->get_data();
-      out_grad[i]    = nd->get_gradient();
+    for (size_t i = 0; i < out_channels_; i++) {
+      const auto &nd   = ith_out_node(i);
+      bwd_out_data_[i] = nd->get_data();
+      bwd_out_grad_[i] = nd->get_gradient();
     }
-    back_propagation(in_data, out_data, out_grad, in_grad);
+    back_propagation(bwd_in_data_, bwd_out_data_, bwd_out_grad_, bwd_in_grad_);
   }
 
   /* @brief Allocates data in the computational graph and reset weights if
@@ -576,15 +635,16 @@ class layer : public node {
     // computational graph and the methods fan_in_size() and fan_out_size()
     // return the number of incoming/outcoming connections for each
     // input/output unit.
-    for (serial_size_t i = 0; i < in_channels_; i++) {
+    for (size_t i = 0; i < in_channels_; i++) {
       switch (in_type_[i]) {
         // fill vectors of weight type
         case vector_type::weight:
-          weight_init_->fill(get_weight_data(i), fan_in_size(), fan_out_size());
+          weight_init_->fill(get_weight_data(i), fan_in_size(i),
+                             fan_out_size(i));
           break;
         // fill vector of bias type
         case vector_type::bias:
-          bias_init_->fill(get_weight_data(i), fan_in_size(), fan_out_size());
+          bias_init_->fill(get_weight_data(i), fan_in_size(i), fan_out_size(i));
           break;
         default: break;
       }
@@ -595,23 +655,17 @@ class layer : public node {
   }
 
   void clear_grads() {
-    for (serial_size_t i = 0; i < static_cast<serial_size_t>(in_type_.size());
-         i++) {
+    for (size_t i = 0; i < in_type_.size(); i++) {
       ith_in_node(i)->clear_grads();
     }
   }
 
-  void update_weight(optimizer *o, serial_size_t batch_size) {
-    float_t rcp_batch_size = float_t(1) / float_t(batch_size);
-    auto &diff             = weights_diff_;
-    for (serial_size_t i = 0; i < static_cast<serial_size_t>(in_type_.size());
-         i++) {
+  void update_weight(optimizer *o) {
+    auto &diff = weights_diff_;
+    for (size_t i = 0; i < in_type_.size(); i++) {
       if (trainable() && is_trainable_weight(in_type_[i])) {
         vec_t &target = *get_weight_data(i);
         ith_in_node(i)->merge_grads(&diff);
-        for (size_t j = 0; j < diff.size(); ++j) {
-          diff[j] *= rcp_batch_size;
-        }
         // parallelize only when target size is big enough to mitigate
         // thread spawning overhead.
         bool parallelize = (target.size() >= 512);
@@ -637,20 +691,20 @@ class layer : public node {
     return true;
   }
 
-  virtual void set_sample_count(serial_size_t sample_count) {
+  virtual void set_sample_count(size_t sample_count) {
     // increase the size if necessary - but do not decrease
     auto resize = [sample_count](tensor_t *tensor) {
       tensor->resize(sample_count, (*tensor)[0]);
     };
 
-    for (serial_size_t i = 0; i < in_channels_; i++) {
+    for (size_t i = 0; i < in_channels_; i++) {
       if (!is_trainable_weight(in_type_[i])) {
         resize(ith_in_node(i)->get_data());
       }
       resize(ith_in_node(i)->get_gradient());
     }
 
-    for (serial_size_t i = 0; i < out_channels_; i++) {
+    for (size_t i = 0; i < out_channels_; i++) {
       if (!is_trainable_weight(out_type_[i])) {
         resize(ith_out_node(i)->get_data());
       }
@@ -659,8 +713,8 @@ class layer : public node {
   }
 
   /**
-  * generate layer from cereal's Archive
-  **/
+   * generate layer from cereal's Archive
+   **/
   template <typename InputArchive>
   static std::shared_ptr<layer> load_layer(InputArchive &ia);
 
@@ -676,9 +730,9 @@ class layer : public node {
   /** Flag indicating whether the layer/node operations ara paralellized */
   bool parallelize_;
   /** The number of input vectors/edges */
-  serial_size_t in_channels_;
+  size_t in_channels_;
   /** The number of output vectors/edges */
-  serial_size_t out_channels_;
+  size_t out_channels_;
   /** Vector containing the type of data for inputs */
   std::vector<vector_type> in_type_;
   /** Vector containing the type of data for outputs */
@@ -694,6 +748,13 @@ class layer : public node {
    * memory allocation */
   vec_t weights_diff_;
 
+  template <typename T, typename Func>
+  inline void for_i(T size, Func f, size_t grainsize = 100) {
+    tiny_dnn::for_i(parallelize_, size, f, grainsize);
+  }
+
+  friend struct serialization_buddy;
+
  private:
   /** Flag indicating whether the layer/node parameters are trainable */
   bool trainable_;
@@ -701,6 +762,13 @@ class layer : public node {
   std::shared_ptr<weight_init::function> weight_init_;
   /** Pointer to the function for biases initialization */
   std::shared_ptr<weight_init::function> bias_init_;
+
+  std::vector<tensor_t *> fwd_in_data_;
+  std::vector<tensor_t *> fwd_out_data_;
+  std::vector<tensor_t *> bwd_in_data_;
+  std::vector<tensor_t *> bwd_in_grad_;
+  std::vector<tensor_t *> bwd_out_data_;
+  std::vector<tensor_t *> bwd_out_grad_;
 
   /* @brief Allocates the necessary edge memory in a specific
    * incoming connection.
@@ -712,7 +780,7 @@ class layer : public node {
    *     nullptr -- |edge| -- prev(i) ---- |layer|
    *               nullptr -- prev(i+1) -´
    */
-  void alloc_input(serial_size_t i) const {
+  void alloc_input(size_t i) const {
     // the created incoming edge won't have a previous connection,
     // for this reason first parameter is a nullptr.
     prev_[i] = std::make_shared<edge>(nullptr, in_shape()[i], in_type_[i]);
@@ -728,7 +796,7 @@ class layer : public node {
    *     |layer| -- next(i) ---- |edge|
    *             `- next(i+1) -- nullptr
    */
-  void alloc_output(serial_size_t i) const {
+  void alloc_output(size_t i) const {
     // the created outcoming will have the current layer as the
     // previous node.
     next_[i] = std::make_shared<edge>(const_cast<layer *>(this), out_shape()[i],
@@ -744,7 +812,7 @@ class layer : public node {
    * and the necessary memory it's allocated. The method returns the pointer
    * to the previous edge.
    */
-  edgeptr_t ith_in_node(serial_size_t i) {
+  edgeptr_t ith_in_node(size_t i) {
     // in case that the  edge doesn't exist, we create it
     if (!prev_[i]) alloc_input(i);
     return prev()[i];
@@ -759,18 +827,19 @@ class layer : public node {
    * and the necessary memory it's allocated. The method returns the pointer
    * to the next edge.
    */
-  edgeptr_t ith_out_node(serial_size_t i) {
+  edgeptr_t ith_out_node(size_t i) {
     // in case that the  edge doesn't exist, we create it
     if (!next_[i]) alloc_output(i);
     return next()[i];
   }
+  edgeptr_t ith_out_node(size_t i) const { return next()[i]; }
 
   /* @brief Retrieves weight vector from incoming edge
    * @param i The position of incoming edge.
    *
    * Returns the mutable pointer to the edge raw data.
    */
-  vec_t *get_weight_data(serial_size_t i) {
+  vec_t *get_weight_data(size_t i) {
     assert(is_trainable_weight(in_type_[i]));
     return &(*(ith_in_node(i)->get_data()))[0];
   }
@@ -780,20 +849,27 @@ class layer : public node {
    *
    * Returns the non mutable pointer to the edge raw data.
    */
-  const vec_t *get_weight_data(serial_size_t i) const {
+  const vec_t *get_weight_data(size_t i) const {
     assert(is_trainable_weight(in_type_[i]));
-    return &(*(const_cast<layerptr_t>(this)->ith_in_node(i)->get_data()))[0];
+    return &(*(const_cast<layer *>(this)->ith_in_node(i)->get_data()))[0];
   }
 };
 
-inline void connect(layerptr_t head,
-                    layerptr_t tail,
-                    serial_size_t head_index = 0,
-                    serial_size_t tail_index = 0) {
+inline void connect(layer *head,
+                    layer *tail,
+                    size_t head_index = 0,
+                    size_t tail_index = 0) {
   auto out_shape = head->out_shape()[head_index];
   auto in_shape  = tail->in_shape()[tail_index];
 
   head->setup(false);
+
+  // todo (karandesai) enable shape inferring for all layers
+  // currently only possible for activation layers.
+  if (in_shape.size() == 0) {
+    tail->set_in_shape(out_shape);
+    in_shape = out_shape;
+  }
 
   if (out_shape.size() != in_shape.size()) {
     connection_mismatch(*head, *tail);
@@ -861,10 +937,10 @@ inline void data_mismatch(const layer &layer, const vec_t &data) {
   throw nn_error("input dimension mismatch!" + detail_info);
 }
 
-inline void pooling_size_mismatch(serial_size_t in_width,
-                                  serial_size_t in_height,
-                                  serial_size_t pooling_size_x,
-                                  serial_size_t pooling_size_y) {
+inline void pooling_size_mismatch(size_t in_width,
+                                  size_t in_height,
+                                  size_t pooling_size_x,
+                                  size_t pooling_size_y) {
   std::ostringstream os;
 
   os << std::endl;

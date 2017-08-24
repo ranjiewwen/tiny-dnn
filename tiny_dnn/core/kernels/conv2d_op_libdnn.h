@@ -1,53 +1,15 @@
 /*
-    COPYRIGHT
-
-    All contributions by Taiga Nomi
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
-    All other contributions:
-    Copyright (c) 2013-2016, the respective contributors.
-    All rights reserved.
-
-    Each contributor holds copyright over their respective contributions.
-    The project versioning (Git) records all such contribution source
-   information.
-
-    LICENSE
-
-    The BSD 3-Clause License
-
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice,
-   this
-      list of conditions and the following disclaimer.
-
-    * Redistributions in binary form must reproduce the above copyright notice,
-      this list of conditions and the following disclaimer in the documentation
-      and/or other materials provided with the distribution.
-
-    * Neither the name of tiny-cnn nor the names of its
-      contributors may be used to endorse or promote products derived from
-      this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-   ARE
-    DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-    FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-    DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-   LIABILITY,
-    OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
-   USE
-    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+    Use of this source code is governed by a BSD-style license that can be found
+    in the LICENSE file.
 */
 #pragma once
+
+#include <algorithm>
+#include <memory>
+#include <vector>
 
 #include "tiny_dnn/core/framework/op_kernel.h"
 
@@ -74,7 +36,7 @@ class Conv2dLibDNNForwardOp : public core::OpKernel {
     }
   }
 
-  void compute(const core::OpKernelContext &context) override {
+  void compute(core::OpKernelContext &context) override {
 #ifdef CNN_USE_LIBDNN
     // incoming/outcoming datm
     const tensor_t &in_data = context.input(0);
@@ -93,7 +55,7 @@ class Conv2dLibDNNForwardOp : public core::OpKernel {
     CLCudaAPI::Context ctx = OpKernel::device_->context();
     CLCudaAPI::Queue queue = OpKernel::device_->queue();
 
-    for (serial_size_t i = 0; i < in_data.size(); ++i) {
+    for (size_t i = 0; i < in_data.size(); ++i) {
       // allocate data to GPU
 
       auto dev_in = CLCudaAPI::Buffer<float_t>(ctx, queue, in_data[i].begin(),
@@ -145,7 +107,7 @@ class Conv2dLibDNNForwardOp : public core::OpKernel {
 
       // FOR DEBUG ONLY
       nn_warn("W kernel");
-      for (serial_size_t j = 0; j < W.size(); ++j) {
+      for (size_t j = 0; j < W.size(); ++j) {
           std::cout << dev_W_shadow[j] << " ";
       }
       std::cout << std::endl;
@@ -156,7 +118,7 @@ class Conv2dLibDNNForwardOp : public core::OpKernel {
 
       // FOR DEBUG ONLY
       nn_warn("input kernel");
-      for (serial_size_t j = 0; j < in_data_padded[i].size(); ++j) {
+      for (size_t j = 0; j < in_data_padded[i].size(); ++j) {
           std::cout << dev_in_shadow[j] << " ";
       }
       std::cout << std::endl;*/
@@ -169,7 +131,7 @@ class Conv2dLibDNNForwardOp : public core::OpKernel {
       /*
       // FOR DEBUG ONLY
       nn_warn("output kernel");
-      for (serial_size_t j = 0; j < out.size(); ++j) {
+      for (size_t j = 0; j < out.size(); ++j) {
           std::cout << out[j] << " ";
       }
       std::cout << std::endl;
@@ -211,13 +173,12 @@ class Conv2dLibDNNForwardOp : public core::OpKernel {
 // TODO(edgar): refactor this since it's possible
 // to have OpenCL and CUDA.
 #if defined(USE_OPENCL)
-      greentea::Backend::BACKEND_OpenCL
+      greentea::Backend::BACKEND_OpenCL);
 #elif defined(USE_CUDA)
-      greentea::Backend::BACKEND_CUDA
+      greentea::Backend::BACKEND_CUDA);
 #else
-      greentea::Backend::BACKEND_CPU
+      greentea::Backend::BACKEND_CPU);
 #endif
-      );
 
     // Initialize device pointer in libdnn
     dev_ptr_->Init();
@@ -296,7 +257,7 @@ class Conv2dLibDNNBackwardOp : public core::OpKernel {
   explicit Conv2dLibDNNBackwardOp(const core::OpKernelConstruction &context)
     : core::OpKernel(context) {}
 
-  void compute(const core::OpKernelContext &context) override {
+  void compute(core::OpKernelContext &context) override {
     CNN_UNREFERENCED_PARAMETER(context);
     throw nn_error("Not implemented yet.");
   }

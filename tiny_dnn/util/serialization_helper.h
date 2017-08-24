@@ -1,46 +1,26 @@
 /*
-    Copyright (c) 2016, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the tiny-dnn nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-   AND ANY
-    EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-   FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
-   THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+    Use of this source code is governed by a BSD-style license that can be found
+    in the LICENSE file.
 */
 #pragma once
 
-#include <cereal/archives/json.hpp>
-#include <cereal/types/memory.hpp>
 #include <functional>
 #include <map>
 #include <memory>
 #include <string>
 #include <typeindex>
 
+#include <cereal/archives/json.hpp>
+#include <cereal/types/memory.hpp>
+
 #include "tiny_dnn/layers/layers.h"
 #include "tiny_dnn/util/macro.h"
 #include "tiny_dnn/util/nn_error.h"
 #include "tiny_dnn/util/serialization_functions.h"
+#include "tiny_dnn/util/serialization_layer_list.h"
 
 namespace tiny_dnn {
 
@@ -64,10 +44,10 @@ class serialization_helper {
     check_if_enabled();
 
     if (savers_.find(layer_name) == savers_.end()) {
-      throw nn_error("Failed to generate layer. Generator for " + layer_name +
+      throw nn_error("Failed to save layer. Saver for " + layer_name +
                      " is not found.\n"
-                     "Please use CNN_REGISTER_LAYER_DESERIALIZER macro to "
-                     "register appropriate generator");
+                     "Please use CNN_REGISTER_LAYER macro to register "
+                     "appropriate saver.");
     }
 
     savers_[layer_name](reinterpret_cast<void *>(&ar), l);
@@ -107,37 +87,16 @@ class serialization_helper {
   template <typename T>
   static void save_layer_impl(OutputArchive &oa, const layer *layer);
 
-#define CNN_REGISTER_LAYER_BODY(layer_type, layer_name) \
-  register_type<layer_type>(layer_name);                \
-  register_saver(layer_name, save_layer_impl<layer_type>)
+  template <typename T>
+  friend void register_layers(T *h);
 
-#define CNN_REGISTER_LAYER(layer_type, layer_name) \
-  CNN_REGISTER_LAYER_BODY(layer_type, #layer_name)
-
-#define CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, activation_type, \
-                                           layer_name)                  \
-  CNN_REGISTER_LAYER_BODY(layer_type<activation::activation_type>,      \
-                          #layer_name "<" #activation_type ">")
-
-#define CNN_REGISTER_LAYER_WITH_ACTIVATIONS(layer_type, layer_name)       \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, tan_h, layer_name);      \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, softmax, layer_name);    \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, identity, layer_name);   \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, sigmoid, layer_name);    \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, relu, layer_name);       \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, leaky_relu, layer_name); \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, elu, layer_name);        \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, tan_hp1m2, layer_name)
-
-  serialization_helper() {
-#include "serialization_layer_list.h"
+  template <typename T>
+  void register_layer(const char *layer_name) {
+    register_type<T>(layer_name);
+    register_saver(layer_name, save_layer_impl<T>);
   }
 
-#undef CNN_REGISTER_LAYER_BODY
-#undef CNN_REGISTER_LAYER
-#undef CNN_REGISTER_LAYER_WITH_ACTIVATION
-#undef CNN_REGISTER_LAYER_WITH_ACTIVATIONS
-
+  serialization_helper() { register_layers(this); }
 };  // class serialization_helper
 
 template <typename OutputArchive>
@@ -158,9 +117,9 @@ void layer::save_layer(OutputArchive &oa, const layer &l) {
 
 template <class Archive>
 void layer::serialize_prolog(Archive &ar) {
-  ar(cereal::make_nvp(
-    "type",
-    serialization_helper<Archive>::get_instance().type_name(typeid(*this))));
+  std::string name =
+    serialization_helper<Archive>::get_instance().type_name(typeid(*this));
+  ar(cereal::make_nvp("type", name));
 }
 
 }  // namespace tiny_dnn

@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
@@ -11,8 +11,8 @@
 #include <random>
 #include <type_traits>
 
-#include "nn_error.h"
 #include "tiny_dnn/config.h"
+#include "tiny_dnn/util/nn_error.h"
 
 namespace tiny_dnn {
 
@@ -61,7 +61,7 @@ inline void set_random_seed(unsigned int seed) {
 
 template <typename Container>
 inline int uniform_idx(const Container &t) {
-  return uniform_rand(0, int(t.size() - 1));
+  return uniform_rand(0, static_cast<int>(t.size() - 1));
 }
 
 inline bool bernoulli(float_t p) {

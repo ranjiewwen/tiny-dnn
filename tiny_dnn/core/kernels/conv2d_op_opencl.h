@@ -1,53 +1,14 @@
 /*
-    COPYRIGHT
-
-    All contributions by Taiga Nomi
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
-    All other contributions:
-    Copyright (c) 2013-2016, the respective contributors.
-    All rights reserved.
-
-    Each contributor holds copyright over their respective contributions.
-    The project versioning (Git) records all such contribution source
-   information.
-
-    LICENSE
-
-    The BSD 3-Clause License
-
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice,
-   this
-      list of conditions and the following disclaimer.
-
-    * Redistributions in binary form must reproduce the above copyright notice,
-      this list of conditions and the following disclaimer in the documentation
-      and/or other materials provided with the distribution.
-
-    * Neither the name of tiny-cnn nor the names of its
-      contributors may be used to endorse or promote products derived from
-      this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-   ARE
-    DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-    FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-    DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-   LIABILITY,
-    OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
-   USE
-    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+    Use of this source code is governed by a BSD-style license that can be found
+    in the LICENSE file.
 */
 #pragma once
+
+#include <algorithm>
+#include <vector>
 
 #include "tiny_dnn/core/framework/op_kernel.h"
 
@@ -58,7 +19,7 @@ class Conv2dOpenCLForwardOp : public core::OpKernel {
   explicit Conv2dOpenCLForwardOp(const core::OpKernelConstruction &context)
     : core::OpKernel(context) {}
 
-  void compute(const core::OpKernelContext &context) override {
+  void compute(core::OpKernelContext &context) override {
 #if defined(USE_OPENCL) || defined(USE_CUDA)
     auto params = OpKernel::params_->conv();
 
@@ -89,7 +50,7 @@ class Conv2dOpenCLForwardOp : public core::OpKernel {
     CLCudaAPI::Queue queue   = context.device()->queue();
 
     // TODO(edgar): check if we really need that
-    for (serial_size_t i = 0; i < in_data.size(); ++i) {
+    for (size_t i = 0; i < in_data.size(); ++i) {
       // Creates device buffers and copies the host data to these
       // device buffers.
 
@@ -118,13 +79,14 @@ class Conv2dOpenCLForwardOp : public core::OpKernel {
       kernel.SetArgument(9,
                          static_cast<cl_ushort>(params.in.height_));  // HEIGHT
       kernel.SetArgument(
-        10, static_cast<cl_ushort>(params.out.width_));  // OUTPUT_W
+        10,
+        static_cast<cl_ushort>(params.out.width_));  // OUTPUT_W
       kernel.SetArgument(
         11, static_cast<cl_ushort>(params.out.height_));  // OUTPUT_H
 
       // We make sure that work group size is multiple of 16
-      serial_size_t res  = device->device().MaxWorkGroupSize() % 16;
-      serial_size_t size = device->device().MaxWorkGroupSize() - res;
+      size_t res  = device->device().MaxWorkGroupSize() % 16;
+      size_t size = device->device().MaxWorkGroupSize() - res;
 
       auto global = std::vector<size_t>{size};
       auto local  = std::vector<size_t>{16};
@@ -148,7 +110,7 @@ class Conv2dOpenCLForwardOp : public core::OpKernel {
 
       // FOR DEBUG ONLY
       nn_warn("output kernel");
-      for (serial_size_t j = 0; j < out.size(); ++j) {
+      for (size_t j = 0; j < out.size(); ++j) {
         std::cout << out[j] << " ";
       }
       std::cout << std::endl;
@@ -169,7 +131,7 @@ class Conv2dOpenCLBackwardOp : public core::OpKernel {
   explicit Conv2dOpenCLBackwardOp(const core::OpKernelConstruction &context)
     : core::OpKernel(context) {}
 
-  void compute(const core::OpKernelContext &context) override {
+  void compute(core::OpKernelContext &context) override {
     CNN_UNREFERENCED_PARAMETER(context);
     nn_error("Not implemented yet.");
   }

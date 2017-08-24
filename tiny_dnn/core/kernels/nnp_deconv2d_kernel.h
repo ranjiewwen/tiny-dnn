@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2016, Taiga Nomi, Edgar Riba
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
@@ -7,10 +7,12 @@
 */
 #pragma once
 
+#include <vector>
+
 #include "tiny_dnn/core/params/deconv_params.h"
 
 #ifdef CNN_USE_NNPACK
-#include "nnpack.h"
+#include <nnpack.h>
 
 namespace tiny_dnn {
 namespace core {

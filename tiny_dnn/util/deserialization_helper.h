@@ -1,31 +1,9 @@
 /*
-    Copyright (c) 2016, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the tiny-dnn nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-   AND ANY
-    EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-   FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
-   THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+    Use of this source code is governed by a BSD-style license that can be found
+    in the LICENSE file.
 */
 #pragma once
 
@@ -42,6 +20,7 @@
 #include "tiny_dnn/util/macro.h"
 #include "tiny_dnn/util/nn_error.h"
 #include "tiny_dnn/util/serialization_functions.h"
+#include "tiny_dnn/util/serialization_layer_list.h"
 
 namespace tiny_dnn {
 
@@ -65,10 +44,10 @@ class deserialization_helper {
     check_if_enabled();
 
     if (loaders_.find(layer_name) == loaders_.end()) {
-      throw nn_error("Failed to generate layer. Generator for " + layer_name +
+      throw nn_error("Failed to load layer. Loader for " + layer_name +
                      " is not found.\n"
-                     "Please use CNN_REGISTER_LAYER_DESERIALIZER macro to "
-                     "register appropriate generator");
+                     "Please use CNN_REGISTER_LAYER macro to register "
+                     "appropriate loader.");
     }
 
     return loaders_[layer_name](reinterpret_cast<void *>(&ar));
@@ -107,44 +86,23 @@ class deserialization_helper {
   template <typename T>
   static std::shared_ptr<layer> load_layer_impl(InputArchive &ia);
 
-#define CNN_REGISTER_LAYER_BODY(layer_type, layer_name)     \
-  register_loader(layer_name, load_layer_impl<layer_type>); \
-  register_type<layer_type>(layer_name);
+  template <typename T>
+  friend void register_layers(T *h);
 
-#define CNN_REGISTER_LAYER(layer_type, layer_name) \
-  CNN_REGISTER_LAYER_BODY(layer_type, #layer_name)
-
-#define CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, activation_type, \
-                                           layer_name)                  \
-  CNN_REGISTER_LAYER_BODY(layer_type<activation::activation_type>,      \
-                          #layer_name "<" #activation_type ">")
-
-#define CNN_REGISTER_LAYER_WITH_ACTIVATIONS(layer_type, layer_name)       \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, tan_h, layer_name);      \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, softmax, layer_name);    \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, identity, layer_name);   \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, sigmoid, layer_name);    \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, relu, layer_name);       \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, leaky_relu, layer_name); \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, elu, layer_name);        \
-  CNN_REGISTER_LAYER_WITH_ACTIVATION(layer_type, tan_hp1m2, layer_name)
-
-  deserialization_helper() {
-#include "serialization_layer_list.h"
+  template <typename T>
+  void register_layer(const char *layer_name) {
+    register_loader(layer_name, load_layer_impl<T>);
+    register_type<T>(layer_name);
   }
 
-#undef CNN_REGISTER_LAYER_BODY
-#undef CNN_REGISTER_LAYER
-#undef CNN_REGISTER_LAYER_WITH_ACTIVATION
-#undef CNN_REGISTER_LAYER_WITH_ACTIVATIONS
-
+  deserialization_helper() { register_layers(this); }
 };  // class deserialization_helper
 
 template <typename InputArchive>
 template <typename T>
 std::shared_ptr<layer> deserialization_helper<InputArchive>::load_layer_impl(
   InputArchive &ia) {
-  using ST = typename std::aligned_storage<sizeof(T), CNN_ALIGNOF(T)>::type;
+  using ST = typename std::aligned_storage<sizeof(T), alignof(T)>::type;
 
   std::unique_ptr<ST> bn(new ST());
 
@@ -179,8 +137,8 @@ inline void finish_loading_layer(cereal::JSONInputArchive &ia) {
 }
 
 /**
-* generate layer from cereal's Archive
-**/
+ * generate layer from cereal's Archive
+ **/
 template <typename InputArchive>
 std::shared_ptr<layer> layer::load_layer(InputArchive &ia) {
   start_loading_layer(ia);

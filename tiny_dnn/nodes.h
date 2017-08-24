@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2016, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
@@ -7,8 +7,10 @@
 */
 #pragma once
 
+#include <memory>
 #include <tuple>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #ifndef CNN_NO_SERIALIZATION
@@ -23,14 +25,14 @@
 namespace cereal {
 
 template <typename Archive>
-void save(Archive &ar, const std::vector<tiny_dnn::layerptr_t> &v) {
+void save(Archive &ar, const std::vector<tiny_dnn::layer *> &v) {
 #ifndef CNN_NO_SERIALIZATION
   ar(cereal::make_size_tag(static_cast<cereal::size_type>(v.size())));
   for (auto n : v) {
     tiny_dnn::layer::save_layer(ar, *n);
   }
 #else
-  throw tiny_dnn::nn_error("TinyDNN was not built with Serialization support");
+  throw tiny_dnn::nn_error("tiny-dnn was not built with Serialization support");
 #endif  // CNN_NO_SERIALIZATION
 }
 
@@ -44,7 +46,7 @@ void load(Archive &ar, std::vector<std::shared_ptr<tiny_dnn::layer>> &v) {
     v.emplace_back(tiny_dnn::layer::load_layer(ar));
   }
 #else
-  throw tiny_dnn::nn_error("TinyDNN was not built with Serialization support");
+  throw tiny_dnn::nn_error("tiny-dnn was not built with Serialization support");
 #endif  // CNN_NO_SERIALIZATION
 }
 
@@ -65,20 +67,21 @@ namespace tiny_dnn {
  * (to avoid double-free).
  *
  *     sequential s;
- *     s.add(fc<tan_h>(100, 200));                   // rvalue, moved into nodes
+ *     s.add(fc(100, 200));                          // rvalue, moved into nodes
  *
- *     s.add(std::make_shared<fc<tan_h>>(200, 100)); // shared_ptr, shared by
+ *     s.add(std::make_shared<fc>(200, 100));        // shared_ptr, shared by
  *nodes
  *
- *     fc<softmax> out(100, 10);
+ *     fc out(100, 10);
+ *     softmax sft();
  *     s.add(out);                                   // lvalue, hold raw-pointer
  *only
  *
  **/
 class nodes {
  public:
-  typedef std::vector<layerptr_t>::iterator iterator;
-  typedef std::vector<layerptr_t>::const_iterator const_iterator;
+  typedef std::vector<layer *>::iterator iterator;
+  typedef std::vector<layer *>::const_iterator const_iterator;
 
   /**
    * propagate gradient
@@ -97,9 +100,9 @@ class nodes {
   /**
    * update weights and clear all gradients
    **/
-  virtual void update_weights(optimizer *opt, int batch_size) {
+  virtual void update_weights(optimizer *opt) {
     for (auto l : nodes_) {
-      l->update_weight(opt, batch_size);
+      l->update_weight(opt);
     }
   }
 
@@ -125,8 +128,8 @@ class nodes {
   const_iterator end() const { return nodes_.end(); }
   layer *operator[](size_t index) { return nodes_[index]; }
   const layer *operator[](size_t index) const { return nodes_[index]; }
-  serial_size_t in_data_size() const { return nodes_.front()->in_data_size(); }
-  serial_size_t out_data_size() const { return nodes_.back()->out_data_size(); }
+  size_t in_data_size() const { return nodes_.front()->in_data_size(); }
+  size_t out_data_size() const { return nodes_.back()->out_data_size(); }
 
   template <typename T>
   const T &at(size_t index) const {
@@ -174,13 +177,11 @@ class nodes {
     }
   }
 
-  void label2vec(const label_t *t,
-                 serial_size_t num,
-                 std::vector<vec_t> &vec) const {
-    serial_size_t outdim = out_data_size();
+  void label2vec(const label_t *t, size_t num, std::vector<vec_t> &vec) const {
+    size_t outdim = out_data_size();
 
     vec.reserve(num);
-    for (serial_size_t i = 0; i < num; i++) {
+    for (size_t i = 0; i < num; i++) {
       assert(t[i] < outdim);
       vec.emplace_back(outdim, target_value_min());
       vec.back()[t[i]] = target_value_max();
@@ -189,8 +190,7 @@ class nodes {
 
   void label2vec(const std::vector<label_t> &labels,
                  std::vector<vec_t> &vec) const {
-    return label2vec(&labels[0], static_cast<serial_size_t>(labels.size()),
-                     vec);
+    return label2vec(&labels[0], labels.size(), vec);
   }
 
   template <typename OutputArchive>
@@ -230,24 +230,23 @@ class nodes {
   // transform indexing so that it's more suitable for per-layer operations
   // input:  [sample][channel][feature]
   // output: [channel][sample][feature]
-  std::vector<tensor_t> reorder_for_layerwise_processing(
-    const std::vector<tensor_t> &input) {
-    const serial_size_t sample_count = static_cast<serial_size_t>(input.size());
-    const serial_size_t channel_count =
-      static_cast<serial_size_t>(input[0].size());
+  void reorder_for_layerwise_processing(
+    const std::vector<tensor_t> &input,
+    std::vector<std::vector<const vec_t *>> &output) {
+    size_t sample_count  = input.size();
+    size_t channel_count = input[0].size();
 
-    // @todo we could perhaps pass pointers to underlying vec_t objects, in
-    // order to avoid copying
-    std::vector<tensor_t> output(channel_count, tensor_t(sample_count));
-
-    for (serial_size_t sample = 0; sample < sample_count; ++sample) {
-      assert(input[sample].size() == channel_count);
-      for (serial_size_t channel = 0; channel < channel_count; ++channel) {
-        output[channel][sample] = input[sample][channel];
-      }
+    output.resize(channel_count);
+    for (size_t i = 0; i < channel_count; ++i) {
+      output[i].resize(sample_count);
     }
 
-    return output;
+    for (size_t sample = 0; sample < sample_count; ++sample) {
+      assert(input[sample].size() == channel_count);
+      for (size_t channel = 0; channel < channel_count; ++channel) {
+        output[channel][sample] = &input[sample][channel];
+      }
+    }
   }
 
   template <typename T>
@@ -266,7 +265,7 @@ class nodes {
   /* Nodes which this class has ownership */
   std::vector<std::shared_ptr<layer>> own_nodes_;
   /* List of all nodes which includes own_nodes */
-  std::vector<layerptr_t> nodes_;
+  std::vector<layer *> nodes_;
 };
 
 /**
@@ -275,11 +274,11 @@ class nodes {
 class sequential : public nodes {
  public:
   void backward(const std::vector<tensor_t> &first) override {
-    const std::vector<tensor_t> reordered_grad =
-      reorder_for_layerwise_processing(first);
+    std::vector<std::vector<const vec_t *>> reordered_grad;
+    reorder_for_layerwise_processing(first, reordered_grad);
     assert(reordered_grad.size() == 1);
 
-    nodes_.back()->set_out_grads({reordered_grad[0]});
+    nodes_.back()->set_out_grads(&reordered_grad[0], 1);
 
     for (auto l = nodes_.rbegin(); l != nodes_.rend(); l++) {
       (*l)->backward();
@@ -287,17 +286,18 @@ class sequential : public nodes {
   }
 
   std::vector<tensor_t> forward(const std::vector<tensor_t> &first) override {
-    const std::vector<tensor_t> reordered_data =
-      reorder_for_layerwise_processing(first);
+    std::vector<std::vector<const vec_t *>> reordered_data;
+    reorder_for_layerwise_processing(first, reordered_data);
     assert(reordered_data.size() == 1);
 
-    nodes_.front()->set_in_data({reordered_data[0]});
+    nodes_.front()->set_in_data(&reordered_data[0], 1);
 
     for (auto l : nodes_) {
       l->forward();
     }
 
-    const std::vector<tensor_t> out = nodes_.back()->output();
+    std::vector<const tensor_t *> out;
+    nodes_.back()->output(out);
 
     return normalize_out(out);
   }
@@ -317,7 +317,7 @@ class sequential : public nodes {
   }
 
   void check_connectivity() {
-    for (serial_size_t i = 0; i < nodes_.size() - 1; i++) {
+    for (size_t i = 0; i < nodes_.size() - 1; i++) {
       auto out = nodes_[i]->outputs();
       auto in  = nodes_[i + 1]->inputs();
 
@@ -330,7 +330,7 @@ class sequential : public nodes {
   template <typename InputArchive>
   void load_connections(InputArchive &ia) {
     CNN_UNREFERENCED_PARAMETER(ia);
-    for (serial_size_t i = 0; i < nodes_.size() - 1; i++) {
+    for (size_t i = 0; i < nodes_.size() - 1; i++) {
       auto head = nodes_[i];
       auto tail = nodes_[i + 1];
       connect(head, tail, 0, 0);
@@ -343,15 +343,16 @@ class sequential : public nodes {
  private:
   friend class nodes;
 
-  std::vector<tensor_t> normalize_out(const std::vector<tensor_t> &out) {
+  std::vector<tensor_t> normalize_out(
+    const std::vector<const tensor_t *> &out) {
     // normalize indexing back to [sample][layer][feature]
     std::vector<tensor_t> normalized_output;
 
-    const size_t sample_count = out[0].size();
+    const size_t sample_count = out[0]->size();
     normalized_output.resize(sample_count, tensor_t(1));
 
     for (size_t sample = 0; sample < sample_count; ++sample) {
-      normalized_output[sample][0] = out[0][sample];
+      normalized_output[sample][0] = (*out[0])[sample];
     }
 
     return normalized_output;
@@ -365,19 +366,18 @@ class sequential : public nodes {
 class graph : public nodes {
  public:
   void backward(const std::vector<tensor_t> &out_grad) override {
-    serial_size_t output_channel_count =
-      static_cast<serial_size_t>(out_grad[0].size());
+    size_t output_channel_count = out_grad[0].size();
 
     if (output_channel_count != output_layers_.size()) {
       throw nn_error("input size mismatch");
     }
 
-    const std::vector<tensor_t> reordered_grad =
-      reorder_for_layerwise_processing(out_grad);
+    std::vector<std::vector<const vec_t *>> reordered_grad;
+    reorder_for_layerwise_processing(out_grad, reordered_grad);
     assert(reordered_grad.size() == output_channel_count);
 
-    for (serial_size_t i = 0; i < output_channel_count; i++) {
-      output_layers_[i]->set_out_grads({reordered_grad[i]});
+    for (size_t i = 0; i < output_channel_count; i++) {
+      output_layers_[i]->set_out_grads(&reordered_grad[i], 1);
     }
 
     for (auto l = nodes_.rbegin(); l != nodes_.rend(); l++) {
@@ -386,21 +386,20 @@ class graph : public nodes {
   }
 
   std::vector<tensor_t> forward(const std::vector<tensor_t> &in_data) override {
-    serial_size_t input_data_channel_count =
-      static_cast<serial_size_t>(in_data[0].size());
+    size_t input_data_channel_count = in_data[0].size();
 
     if (input_data_channel_count != input_layers_.size()) {
       throw nn_error("input size mismatch");
     }
 
-    const std::vector<tensor_t> reordered_data =
-      reorder_for_layerwise_processing(in_data);
+    std::vector<std::vector<const vec_t *>> reordered_data;
+    reorder_for_layerwise_processing(in_data, reordered_data);
     assert(reordered_data.size() == input_data_channel_count);
 
-    for (serial_size_t channel_index = 0;
-         channel_index < input_data_channel_count; channel_index++) {
-      input_layers_[channel_index]->set_in_data(
-        {reordered_data[channel_index]});
+    for (size_t channel_index = 0; channel_index < input_data_channel_count;
+         channel_index++) {
+      input_layers_[channel_index]->set_in_data(&reordered_data[channel_index],
+                                                1);
     }
 
     for (auto l : nodes_) {
@@ -409,18 +408,18 @@ class graph : public nodes {
     return merge_outs();
   }
 
-  void construct(const std::vector<layerptr_t> &input,
-                 const std::vector<layerptr_t> &output) {
-    std::vector<layerptr_t> sorted;
-    std::vector<nodeptr_t> input_nodes(input.begin(), input.end());
+  void construct(const std::vector<layer *> &input,
+                 const std::vector<layer *> &output) {
+    std::vector<layer *> sorted;
+    std::vector<node *> input_nodes(input.begin(), input.end());
     std::unordered_map<node *, std::vector<uint8_t>> removed_edge;
 
     // topological-sorting
     while (!input_nodes.empty()) {
-      sorted.push_back(dynamic_cast<layerptr_t>(input_nodes.back()));
+      sorted.push_back(dynamic_cast<layer *>(input_nodes.back()));
       input_nodes.pop_back();
 
-      layerptr_t curr          = sorted.back();
+      layer *curr              = sorted.back();
       std::vector<node *> next = curr->next_nodes();
 
       for (size_t i = 0; i < next.size(); i++) {
@@ -455,19 +454,19 @@ class graph : public nodes {
   friend class nodes;
 
   struct _graph_connection {
-    void add_connection(serial_size_t head,
-                        serial_size_t tail,
-                        serial_size_t head_index,
-                        serial_size_t tail_index) {
+    void add_connection(size_t head,
+                        size_t tail,
+                        size_t head_index,
+                        size_t tail_index) {
       if (!is_connected(head, tail, head_index, tail_index)) {
         connections.emplace_back(head, tail, head_index, tail_index);
       }
     }
 
-    bool is_connected(serial_size_t head,
-                      serial_size_t tail,
-                      serial_size_t head_index,
-                      serial_size_t tail_index) const {
+    bool is_connected(size_t head,
+                      size_t tail,
+                      size_t head_index,
+                      size_t tail_index) const {
       return std::find(connections.begin(), connections.end(),
                        std::make_tuple(head, tail, head_index, tail_index)) !=
              connections.end();
@@ -482,18 +481,16 @@ class graph : public nodes {
 #endif  // CNN_NO_SERIALIZATION
     }
 
-    std::vector<
-      std::tuple<serial_size_t, serial_size_t, serial_size_t, serial_size_t>>
-      connections;
-    std::vector<serial_size_t> in_nodes, out_nodes;
+    std::vector<std::tuple<size_t, size_t, size_t, size_t>> connections;
+    std::vector<size_t> in_nodes, out_nodes;
   };
 
   template <typename OutputArchive>
   void save_connections(OutputArchive &oa) const {
 #ifndef CNN_NO_SERIALIZATION
     _graph_connection gc;
-    std::unordered_map<node *, serial_size_t> node2id;
-    serial_size_t idx = 0;
+    std::unordered_map<node *, size_t> node2id;
+    size_t idx = 0;
 
     for (auto n : nodes_) {
       node2id[n] = idx++;
@@ -508,11 +505,11 @@ class graph : public nodes {
     for (auto l : input_layers_) {
       graph_traverse(l, [=](layer &l) { CNN_UNREFERENCED_PARAMETER(l); },
                      [&](edge &e) {
-                       auto next                = e.next();
-                       serial_size_t head_index = e.prev()->next_port(e);
+                       auto next         = e.next();
+                       size_t head_index = e.prev()->next_port(e);
 
                        for (auto n : next) {
-                         serial_size_t tail_index = n->prev_port(e);
+                         size_t tail_index = n->prev_port(e);
                          gc.add_connection(node2id[e.prev()], node2id[n],
                                            head_index, tail_index);
                        }
@@ -532,7 +529,7 @@ class graph : public nodes {
     ia(cereal::make_nvp("graph", gc));
 
     for (auto c : gc.connections) {
-      serial_size_t head, tail, head_index, tail_index;
+      size_t head, tail, head_index, tail_index;
       std::tie(head, tail, head_index, tail_index) = c;
       connect(nodes_[head], nodes_[tail], head_index, tail_index);
     }
@@ -550,13 +547,13 @@ class graph : public nodes {
   // normalize indexing back to [sample][layer][feature]
   std::vector<tensor_t> merge_outs() {
     std::vector<tensor_t> merged;
-    serial_size_t output_channel_count =
-      static_cast<serial_size_t>(output_layers_.size());
-    for (serial_size_t output_channel = 0;
-         output_channel < output_channel_count; ++output_channel) {
-      std::vector<tensor_t> out = output_layers_[output_channel]->output();
+    std::vector<const tensor_t *> out;
+    size_t output_channel_count = output_layers_.size();
+    for (size_t output_channel = 0; output_channel < output_channel_count;
+         ++output_channel) {
+      output_layers_[output_channel]->output(out);
 
-      serial_size_t sample_count = static_cast<serial_size_t>(out[0].size());
+      size_t sample_count = out[0]->size();
       if (output_channel == 0) {
         assert(merged.empty());
         merged.resize(sample_count, tensor_t(output_channel_count));
@@ -564,22 +561,21 @@ class graph : public nodes {
 
       assert(merged.size() == sample_count);
 
-      for (serial_size_t sample = 0; sample < sample_count; ++sample) {
-        merged[sample][output_channel] = out[0][sample];
+      for (size_t sample = 0; sample < sample_count; ++sample) {
+        merged[sample][output_channel] = (*out[0])[sample];
       }
     }
     return merged;
   }
 
-  serial_size_t find_index(const std::vector<node *> &nodes,
-                           layerptr_t target) {
-    for (serial_size_t i = 0; i < nodes.size(); i++) {
+  size_t find_index(const std::vector<node *> &nodes, layer *target) {
+    for (size_t i = 0; i < nodes.size(); i++) {
       if (nodes[i] == static_cast<node *>(&*target)) return i;
     }
     throw nn_error("invalid connection");
   }
-  std::vector<layerptr_t> input_layers_;
-  std::vector<layerptr_t> output_layers_;
+  std::vector<layer *> input_layers_;
+  std::vector<layer *> output_layers_;
 };
 
 template <typename OutputArchive>

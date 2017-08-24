@@ -1,13 +1,24 @@
+/*
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
+    All rights reserved.
+
+    Use of this source code is governed by a BSD-style license that can be found
+    in the LICENSE file.
+*/
 #pragma once
-#include "gtest/gtest.h"
-#include "testhelper.h"
+
+#include <gtest/gtest.h>
+
+#include <vector>
+
+#include "test/testhelper.h"
 #include "tiny_dnn/tiny_dnn.h"
 
 namespace tiny_dnn {
 
 TEST(test_large_thread_count, test_large_thread_count) {
   network<sequential> net;
-  net << fully_connected_layer<tan_h>(1, 2);
+  net << fully_connected_layer(1, 2) << tanh_layer();
   adagrad optimizer;
 
   std::vector<vec_t> data;
@@ -32,4 +43,4 @@ TEST(test_large_thread_count, test_large_thread_count) {
   net.train<mse>(optimizer, data, labels, 300, 1, nop, nop, true, n_threads);
 }
 
-}  // namespace tiny-dnn
+}  // namespace tiny_dnn

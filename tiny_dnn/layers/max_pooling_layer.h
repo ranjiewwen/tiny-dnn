@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2015, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
@@ -8,13 +8,14 @@
 #pragma once
 
 #include <algorithm>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "tiny_dnn/core/kernels/maxpool_grad_op.h"
 #include "tiny_dnn/core/kernels/maxpool_op.h"
 
-#include "tiny_dnn/activations/activation_function.h"
 #include "tiny_dnn/util/util.h"
 
 #ifdef DNN_USE_IMAGE_API
@@ -24,25 +25,21 @@
 namespace tiny_dnn {
 
 /**
- * applies max-pooing operaton to the spatial data
+ * applies max-pooling operaton to the spatial data
  **/
-template <typename Activation = activation::identity>
-class max_pooling_layer : public feedforward_layer<Activation> {
+class max_pooling_layer : public layer {
  public:
-  CNN_USE_LAYER_MEMBERS;
-  typedef feedforward_layer<Activation> Base;
-
   /**
    * @param in_width     [in] width of input image
    * @param in_height    [in] height of input image
    * @param in_channels  [in] the number of input image channels(depth)
    * @param pooling_size [in] factor by which to downscale
    **/
-  max_pooling_layer(serial_size_t in_width,
-                    serial_size_t in_height,
-                    serial_size_t in_channels,
-                    serial_size_t pooling_size,
-                    backend_t backend_type = core::default_engine())
+  max_pooling_layer(size_t in_width,
+                    size_t in_height,
+                    size_t in_channels,
+                    size_t pooling_size,
+                    core::backend_t backend_type = core::default_engine())
     : max_pooling_layer(in_width,
                         in_height,
                         in_channels,
@@ -51,9 +48,9 @@ class max_pooling_layer : public feedforward_layer<Activation> {
                         backend_type) {}
 
   max_pooling_layer(const shape3d &in_shape,
-                    serial_size_t pooling_size,
-                    serial_size_t stride,
-                    backend_t backend_type = core::default_engine())
+                    size_t pooling_size,
+                    size_t stride,
+                    core::backend_t backend_type = core::default_engine())
     : max_pooling_layer(in_shape.width_,
                         in_shape.height_,
                         in_shape.depth_,
@@ -61,12 +58,12 @@ class max_pooling_layer : public feedforward_layer<Activation> {
                         stride,
                         backend_type) {}
 
-  max_pooling_layer(serial_size_t in_width,
-                    serial_size_t in_height,
-                    serial_size_t in_channels,
-                    serial_size_t pooling_size,
-                    serial_size_t stride,
-                    backend_t backend_type = core::default_engine())
+  max_pooling_layer(size_t in_width,
+                    size_t in_height,
+                    size_t in_channels,
+                    size_t pooling_size,
+                    size_t stride,
+                    core::backend_t backend_type = core::default_engine())
     : max_pooling_layer(in_width,
                         in_height,
                         in_channels,
@@ -85,16 +82,16 @@ class max_pooling_layer : public feedforward_layer<Activation> {
    * @param stride       [in] interval at which to apply the filters to the
    *input
   **/
-  max_pooling_layer(serial_size_t in_width,
-                    serial_size_t in_height,
-                    serial_size_t in_channels,
-                    serial_size_t pooling_size_x,
-                    serial_size_t pooling_size_y,
-                    serial_size_t stride_x,
-                    serial_size_t stride_y,
-                    padding pad_type       = padding::valid,
-                    backend_t backend_type = core::default_engine())
-    : Base({vector_type::data}) {
+  max_pooling_layer(size_t in_width,
+                    size_t in_height,
+                    size_t in_channels,
+                    size_t pooling_size_x,
+                    size_t pooling_size_y,
+                    size_t stride_x,
+                    size_t stride_y,
+                    padding pad_type             = padding::valid,
+                    core::backend_t backend_type = core::default_engine())
+    : layer({vector_type::data}, {vector_type::data}) {
     set_maxpool_params(
       shape3d(in_width, in_height, in_channels),
       shape3d(conv_out_length(in_width, pooling_size_x, stride_x, pad_type),
@@ -104,59 +101,50 @@ class max_pooling_layer : public feedforward_layer<Activation> {
 
     init_connection();
     init_backend(backend_type);
-    Base::set_backend_type(backend_type);
+    layer::set_backend_type(backend_type);
   }
 
   // move constructor
   max_pooling_layer(max_pooling_layer &&other)  // NOLINT
-    : Base(std::move(other)), params_(std::move(other.params_)) {
+    : layer(std::move(other)), params_(std::move(other.params_)) {
     init_connection();
-    init_backend(std::move(Base::engine()));
+    init_backend(std::move(layer::engine()));
   }
 
-  serial_size_t fan_in_size() const override {
-    return static_cast<serial_size_t>(params_.out2in[0].size());
-  }
+  size_t fan_in_size() const override { return params_.out2in[0].size(); }
 
-  serial_size_t fan_out_size() const override { return 1; }
+  size_t fan_out_size() const override { return 1; }
 
   void forward_propagation(const std::vector<tensor_t *> &in_data,
                            std::vector<tensor_t *> &out_data) override {
     // forward convolutional op context
-    auto ctx = OpKernelContext(in_data, out_data);
-    ctx.setParallelize(layer::parallelize());
-    ctx.setEngine(layer::engine());
+    fwd_ctx_.set_in_out(in_data, out_data);
+    fwd_ctx_.setParallelize(layer::parallelize());
+    fwd_ctx_.setEngine(layer::engine());
 
     // launch convolutional kernel
-    kernel_fwd_->compute(ctx);
-
-    // activations
-    this->forward_activation(*out_data[0], *out_data[1]);
+    kernel_fwd_->compute(fwd_ctx_);
   }
 
   void back_propagation(const std::vector<tensor_t *> &in_data,
                         const std::vector<tensor_t *> &out_data,
                         std::vector<tensor_t *> &out_grad,
                         std::vector<tensor_t *> &in_grad) override {
-    // activations
-    // TODO(edgar/nyanp): refactor and move activations outside
-    this->backward_activation(*out_grad[0], *out_data[0], *out_grad[1]);
-
     // backward convolutional op context
-    auto ctx = OpKernelContext(in_data, out_data, out_grad, in_grad);
-    ctx.setParallelize(layer::parallelize());
-    ctx.setEngine(layer::engine());
+    bwd_ctx_.set_in_out(in_data, out_data, out_grad, in_grad);
+    bwd_ctx_.setParallelize(layer::parallelize());
+    bwd_ctx_.setEngine(layer::engine());
 
     // launch convolutional kernel
-    kernel_back_->compute(ctx);
+    kernel_back_->compute(bwd_ctx_);
   }
 
-  std::vector<index3d<serial_size_t>> in_shape() const override {
+  std::vector<index3d<size_t>> in_shape() const override {
     return {params_.in};
   }
 
-  std::vector<index3d<serial_size_t>> out_shape() const override {
-    return {params_.out, params_.out};
+  std::vector<index3d<size_t>> out_shape() const override {
+    return {params_.out};
   }
 
   std::string layer_type() const override { return std::string("max-pool"); }
@@ -165,47 +153,48 @@ class max_pooling_layer : public feedforward_layer<Activation> {
     return std::string("../tiny_cnn/core/kernels/cl_kernels/pooling.cl");
   }
 
-  std::pair<serial_size_t, serial_size_t> pool_size() const {
+  std::pair<size_t, size_t> pool_size() const {
     return std::make_pair(params_.pool_size_x, params_.pool_size_y);
   }
 
-  void set_sample_count(serial_size_t sample_count) override {
-    Base::set_sample_count(sample_count);
+  void set_sample_count(size_t sample_count) override {
+    layer::set_sample_count(sample_count);
     params_.out2inmax.resize(sample_count,
-                             std::vector<serial_size_t>(params_.out.size()));
+                             std::vector<size_t>(params_.out.size()));
   }
 
-#ifndef CNN_NO_SERIALIZATION
   friend struct serialization_buddy;
-#endif
 
  private:
   /* The Max Poling operation params */
-  maxpool_params params_;
+  core::maxpool_params params_;
+
+  /* forward op context */
+  core::OpKernelContext fwd_ctx_;
+
+  /* backward op context */
+  core::OpKernelContext bwd_ctx_;
 
   /* Forward and backward ops */
   std::shared_ptr<core::OpKernel> kernel_fwd_;
   std::shared_ptr<core::OpKernel> kernel_back_;
 
-  void connect_kernel(serial_size_t pooling_size_x,
-                      serial_size_t pooling_size_y,
-                      serial_size_t outx,
-                      serial_size_t outy,
-                      serial_size_t c) {
-    serial_size_t dxmax = static_cast<serial_size_t>(
-      std::min(static_cast<serial_size_t>(pooling_size_x),
-               params_.in.width_ - outx * params_.stride_x));
+  void connect_kernel(size_t pooling_size_x,
+                      size_t pooling_size_y,
+                      size_t outx,
+                      size_t outy,
+                      size_t c) {
+    size_t dxmax =
+      std::min(pooling_size_x, params_.in.width_ - outx * params_.stride_x);
 
-    serial_size_t dymax = static_cast<serial_size_t>(
-      std::min(static_cast<serial_size_t>(pooling_size_y),
-               params_.in.height_ - outy * params_.stride_y));
+    size_t dymax =
+      std::min(pooling_size_y, params_.in.height_ - outy * params_.stride_y);
 
-    for (serial_size_t dy = 0; dy < dymax; dy++) {
-      for (serial_size_t dx = 0; dx < dxmax; dx++) {
-        serial_size_t in_index = params_.in.get_index(
-          static_cast<serial_size_t>(outx * params_.stride_x + dx),
-          static_cast<serial_size_t>(outy * params_.stride_y + dy), c);
-        serial_size_t out_index = params_.out.get_index(outx, outy, c);
+    for (size_t dy = 0; dy < dymax; dy++) {
+      for (size_t dx = 0; dx < dxmax; dx++) {
+        size_t in_index = params_.in.get_index(outx * params_.stride_x + dx,
+                                               outy * params_.stride_y + dy, c);
+        size_t out_index = params_.out.get_index(outx, outy, c);
 
         if (in_index >= params_.in2out.size()) {
           throw nn_error("index overflow");
@@ -223,21 +212,22 @@ class max_pooling_layer : public feedforward_layer<Activation> {
     params_.in2out.resize(params_.in.size());
     params_.out2in.resize(params_.out.size());
 
-    for (serial_size_t c = 0; c < params_.in.depth_; ++c) {
-      for (serial_size_t y = 0; y < params_.out.height_; ++y) {
-        for (serial_size_t x = 0; x < params_.out.width_; ++x) {
+    for (size_t c = 0; c < params_.in.depth_; ++c) {
+      for (size_t y = 0; y < params_.out.height_; ++y) {
+        for (size_t x = 0; x < params_.out.width_; ++x) {
           connect_kernel(params_.pool_size_x, params_.pool_size_y, x, y, c);
         }
       }
     }
   }
 
-  void init_backend(backend_t backend_type) {
+  void init_backend(core::backend_t backend_type) {
     core::OpKernelConstruction ctx =
       core::OpKernelConstruction(layer::device(), &params_);
 
-    if (backend_type == backend_t::internal ||
-        backend_type == backend_t::nnpack || backend_type == backend_t::avx) {
+    if (backend_type == core::backend_t::internal ||
+        backend_type == core::backend_t::nnpack ||
+        backend_type == core::backend_t::avx) {
       kernel_fwd_.reset(new MaxPoolOp(ctx));
       kernel_back_.reset(new MaxPoolGradOp(ctx));
       return;
@@ -248,10 +238,10 @@ class max_pooling_layer : public feedforward_layer<Activation> {
 
   void set_maxpool_params(const shape3d &in,
                           const shape3d &out,
-                          serial_size_t pooling_size_x,
-                          serial_size_t pooling_size_y,
-                          serial_size_t stride_x,
-                          serial_size_t stride_y,
+                          size_t pooling_size_x,
+                          size_t pooling_size_y,
+                          size_t stride_x,
+                          size_t stride_y,
                           padding pad_type) {
     params_.in          = in;
     params_.out         = out;

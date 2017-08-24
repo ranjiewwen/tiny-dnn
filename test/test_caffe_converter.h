@@ -1,13 +1,19 @@
 /*
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
     in the LICENSE file.
 */
 #pragma once
-#include "gtest/gtest.h"
-#include "testhelper.h"
+
+#include <gtest/gtest.h>
+
+#include <memory>
+#include <sstream>
+#include <string>
+
+#include "test/testhelper.h"
 #include "tiny_dnn/tiny_dnn.h"
 
 namespace tiny_dnn {
@@ -282,7 +288,7 @@ TEST(caffe_converter, lenet) {
   // relu
   EXPECT_EQ((*model)[5]->in_shape()[0], shape3d(500, 1, 1));
   EXPECT_EQ((*model)[5]->out_shape()[0], shape3d(500, 1, 1));
-  EXPECT_EQ((*model)[5]->layer_type(), "linear");
+  EXPECT_EQ((*model)[5]->layer_type(), "relu-activation");
 
   // fc
   EXPECT_EQ((*model)[6]->in_shape()[0], shape3d(500, 1, 1));
@@ -292,7 +298,7 @@ TEST(caffe_converter, lenet) {
   // softmax
   EXPECT_EQ((*model)[7]->in_shape()[0], shape3d(10, 1, 1));
   EXPECT_EQ((*model)[7]->out_shape()[0], shape3d(10, 1, 1));
-  EXPECT_EQ((*model)[7]->layer_type(), "linear");
+  EXPECT_EQ((*model)[7]->layer_type(), "softmax-activation");
 }
 
 TEST(caffe_converter, lenet_v1) {
@@ -452,7 +458,7 @@ TEST(caffe_converter, lenet_v1) {
   // relu
   EXPECT_EQ((*model)[5]->in_shape()[0], shape3d(500, 1, 1));
   EXPECT_EQ((*model)[5]->out_shape()[0], shape3d(500, 1, 1));
-  EXPECT_EQ((*model)[5]->layer_type(), "linear");
+  EXPECT_EQ((*model)[5]->layer_type(), "relu-activation");
 
   // fc
   EXPECT_EQ((*model)[6]->in_shape()[0], shape3d(500, 1, 1));
@@ -462,7 +468,7 @@ TEST(caffe_converter, lenet_v1) {
   // softmax
   EXPECT_EQ((*model)[7]->in_shape()[0], shape3d(10, 1, 1));
   EXPECT_EQ((*model)[7]->out_shape()[0], shape3d(10, 1, 1));
-  EXPECT_EQ((*model)[7]->layer_type(), "linear");
+  EXPECT_EQ((*model)[7]->layer_type(), "softmax-activation");
 }
 
 TEST(caffe_converter, dropout) {
@@ -686,14 +692,14 @@ TEST(caffe_converter, sigmoid) {
 
   vec_t in = {0.0f, 0.1f, 0.5f, 0.9f, 1.0f};
 
-  auto ret = model->predict(in);
-  sigmoid a;
+  vec_t ret  = model->predict(in);
+  vec_t ret2 = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  sigmoid_layer sig(5);
+  sig.forward_activation(in, ret2);
 
-  EXPECT_EQ(ret[0], a.f(in, 0));
-  EXPECT_EQ(ret[1], a.f(in, 1));
-  EXPECT_EQ(ret[2], a.f(in, 2));
-  EXPECT_EQ(ret[3], a.f(in, 3));
-  EXPECT_EQ(ret[4], a.f(in, 4));
+  for (size_t i = 0; i < 5; i++) {
+    EXPECT_FLOAT_EQ(ret[i], ret2[i]);
+  }
 }
 
 TEST(caffe_converter, tanh) {
@@ -723,14 +729,14 @@ TEST(caffe_converter, tanh) {
 
   vec_t in = {-1.0f, -0.1f, 0.0f, 0.1f, 1.0f};
 
-  auto ret = model->predict(in);
-  tan_h a;
+  vec_t ret  = model->predict(in);
+  vec_t ret2 = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  tanh_layer tanh(5);
+  tanh.forward_activation(in, ret2);
 
-  EXPECT_EQ(ret[0], a.f(in, 0));
-  EXPECT_EQ(ret[1], a.f(in, 1));
-  EXPECT_EQ(ret[2], a.f(in, 2));
-  EXPECT_EQ(ret[3], a.f(in, 3));
-  EXPECT_EQ(ret[4], a.f(in, 4));
+  for (size_t i = 0; i < 5; i++) {
+    EXPECT_FLOAT_EQ(ret[i], ret2[i]);
+  }
 }
 
 TEST(caffe_converter, power) {
@@ -910,4 +916,119 @@ TEST(caffe_converter, fully_with_weights) {
   EXPECT_FLOAT_EQ(b->at(1), 9.0f);
 }
 
-}  // namespace tiny-dnn
+TEST(caffe_converter, load_weights_batchnorm) {
+  /*
+   * This test case tests detail::load_weights_batchnorm which is a low-level
+   * function that loads weights from caffe batchnorm layer into tiny_dnn bn
+   * layer
+   *
+   * caffe stores batch normalization statistics as three blobs/arrays
+   * 0: mean (size = num-channels)
+   * 1: variance (size = num-channels)
+   * 2: inverse of scale factor (size = 1)
+   *
+   * This test case tests 3 channel input layer
+   */
+
+  caffe::LayerParameter lp;
+  caffe::BlobProto *mb = lp.add_blobs();  // mean blob
+  mb->add_data(0.0f);
+  mb->add_data(-1.0f);
+  mb->add_data(1.0f);
+
+  caffe::BlobProto *vb = lp.add_blobs();  // variance blob
+  vb->add_data(0.0f);
+  vb->add_data(1.0f);
+  vb->add_data(1.0f);
+
+  caffe::BlobProto *sf = lp.add_blobs();  // scale factor
+  sf->add_data(1.0f);
+
+  // create tiny-dnn layer
+  batch_normalization_layer dst_layer(1, 3);
+
+  // load weights for dst_layer from caffe layer
+  detail::load_weights_batchnorm(lp, &dst_layer);
+
+  // easiest way to access the weights of batchnorm layer seems to be save()
+  std::ostringstream ser_buf;
+  dst_layer.save(ser_buf);
+
+  EXPECT_EQ(ser_buf.str(), "0 -1 1 0 1 1 ");
+}
+
+TEST(caffe_converter, batchnorm_load_weight_from_caffe_protobinary) {
+  /**
+   * This test case verifies that given caffe model and matching protobinary
+   * weights, the resulting tiny_dnn batchnorm layer has loaded the weights.
+   */
+  std::string json = R"(
+    name: "BNNet"
+    input: "data"
+    input_shape {
+      dim: 1
+      dim: 1
+      dim: 10
+      dim: 10
+    }
+    layer {
+      name: "conv1"
+      type: "Convolution"
+      bottom: "data"
+      top: "conv1"
+      convolution_param {
+        num_output: 3
+        kernel_size: 3
+      }
+    }
+    layer {
+      name: "bn1"
+      type: "BatchNorm"
+      bottom: "conv1"
+      top: "bn1"
+    }
+)";
+  auto model       = create_net_from_json(json);
+
+  // there should be two tiny_dnn layers
+  EXPECT_EQ(model->depth(), 2u);
+
+  EXPECT_EQ((*model)[0]->layer_type(), "conv");
+  EXPECT_EQ((*model)[1]->layer_type(), "batch-norm");
+  // construct caffe network
+  caffe::NetParameter np;
+  // create BN layer
+  caffe::LayerParameter *lp = np.add_layer();
+  lp->set_type("BatchNorm");
+  // assign batchnorm statistics
+  caffe::BlobProto *mb = lp->add_blobs();  // mean blob
+  mb->add_data(0.0f);
+  mb->add_data(-1.0f);
+  mb->add_data(1.0f);
+
+  caffe::BlobProto *vb = lp->add_blobs();  // variance blob
+  vb->add_data(0.0f);
+  vb->add_data(1.0f);
+  vb->add_data(1.0f);
+
+  caffe::BlobProto *sf = lp->add_blobs();  // scale factor
+  sf->add_data(1.0f);
+
+  // serialize it to protobinary format (tmp file)
+  std::string tmp_file_path = unique_path();
+  {
+    std::ofstream ofs(tmp_file_path.c_str());
+    np.SerializeToOstream(&ofs);
+  }
+
+  // load weights from protobinary file to model
+  reload_weight_from_caffe_protobinary(tmp_file_path, model.get());
+  // remove tmp file
+  std::remove(tmp_file_path.c_str());
+  // easiest way to access the weights of batchnorm layer seems to be save()
+  std::ostringstream ser_buf;
+  (*model)[1]->save(ser_buf);
+  EXPECT_EQ(ser_buf.str(), "0 -1 1 0 1 1 ");
+}
+
+}  // namespace tiny_dnn

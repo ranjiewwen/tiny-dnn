@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
@@ -31,6 +31,11 @@
 // #define CNN_USE_OMP
 
 /**
+ * define to enable Grand Central Dispatch parallelization
+ */
+// #define CNN_USE_GCD
+
+/**
  * define to use exceptions
  */
 #define CNN_USE_EXCEPTIONS
@@ -53,7 +58,7 @@
  * Enable Image API support.
  * Currently we use stb by default.
  **/
-//#define DNN_USE_IMAGE_API
+// #define DNN_USE_IMAGE_API
 
 /**
  * Enable Gemmlowp support.
@@ -85,11 +90,5 @@ typedef double float_t;
 #else
 typedef float float_t;
 #endif
-
-/**
- * size of layer, model, data etc.
- * change to smaller type if memory footprint is severe
- **/
-typedef std::uint32_t serial_size_t;
 
 }  // namespace tiny_dnn

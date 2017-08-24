@@ -1,26 +1,28 @@
 /*
-    Copyright (c) 2016, Taiga Nomi
+    Copyright (c) 2013, Taiga Nomi and the respective contributors
     All rights reserved.
 
     Use of this source code is governed by a BSD-style license that can be found
     in the LICENSE file.
 */
 #pragma once
-#include "gtest/gtest.h"
-#include "testhelper.h"
+
+#include <gtest/gtest.h>
+
+#include "test/testhelper.h"
 #include "tiny_dnn/tiny_dnn.h"
 
 namespace tiny_dnn {
 
 TEST(ave_unpool, gradient_check) {  // sigmoid - cross-entropy
-  typedef cross_entropy loss_func;
-  typedef activation::sigmoid activation;
-  typedef network<sequential> network;
+  using loss_func  = cross_entropy;
+  using activation = sigmoid;
+  using network    = network<sequential>;
 
   network nn;
-  nn << fully_connected_layer<activation>(3, 4)
-     << average_unpooling_layer<activation>(2, 2, 1, 2)  // 2x2 => 4x4
-     << average_pooling_layer<activation>(4, 4, 1, 2);
+  nn << fully_connected_layer(3, 4) << activation()
+     << average_unpooling_layer(2, 2, 1, 2)  // 2x2 => 4x4
+     << activation() << average_pooling_layer(4, 4, 1, 2) << activation();
 
   const auto test_data = generate_gradient_check_data(nn.in_data_size());
   nn.init_weight();
@@ -30,7 +32,7 @@ TEST(ave_unpool, gradient_check) {  // sigmoid - cross-entropy
 }
 
 TEST(ave_unpool, forward) {
-  average_unpooling_layer<identity> l(2, 2, 1, 2);
+  average_unpooling_layer l(2, 2, 1, 2);
 
   // clang-format off
     vec_t in = {
@@ -58,7 +60,7 @@ TEST(ave_unpool, forward) {
 }
 
 TEST(ave_unpool, forward_stride) {
-  average_unpooling_layer<identity> l(3, 3, 1, 2, 1);
+  average_unpooling_layer l(3, 3, 1, 2, 1);
 
   // clang-format off
     vec_t in = {
@@ -86,9 +88,24 @@ TEST(ave_unpool, forward_stride) {
   }
 }
 
+TEST(ave_unpool, gradient_check) {
+  using loss_func  = cross_entropy;
+  using activation = sigmoid;
+  using network    = network<sequential>;
+
+  network nn;
+  nn << average_pooling_layer(4, 2, 1, 2);  // 4x2 => 2x1
+
+  const auto test_data = generate_gradient_check_data(nn.in_data_size());
+  nn.init_weight();
+
+  EXPECT_TRUE(nn.gradient_check<loss_func>(test_data.first, test_data.second,
+                                           epsilon<float_t>(), GRAD_CHECK_ALL));
+}
+
 TEST(ave_unpool, read_write) {
-  average_unpooling_layer<tan_h> l1(100, 100, 5, 2);
-  average_unpooling_layer<tan_h> l2(100, 100, 5, 2);
+  average_unpooling_layer l1(100, 100, 5, 2);
+  average_unpooling_layer l2(100, 100, 5, 2);
 
   l1.setup(true);
   l2.setup(true);
@@ -96,4 +113,4 @@ TEST(ave_unpool, read_write) {
   serialization_test(l1, l2);
 }
 
-}  // namespace tiny-dnn
+}  // namespace tiny_dnn
