@@ -29,6 +29,7 @@
 #ifndef CNN_NO_SERIALIZATION
 #include <cereal/archives/binary.hpp>
 #include <cereal/archives/json.hpp>
+#include <cereal/archives/portable_binary.hpp>
 #include <cereal/cereal.hpp>
 #include <cereal/types/deque.hpp>
 #include <cereal/types/polymorphic.hpp>
